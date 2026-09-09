@@ -1,0 +1,242 @@
+package deployments
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+var (
+	ErrDeploymentNotFound = errors.New("deployment not found")
+	ErrInstanceNotFound   = errors.New("instance not found")
+)
+
+// DeploymentRepository defines storage operations for deployments.
+type DeploymentRepository interface {
+	Create(ctx context.Context, d *Deployment) error
+	GetByID(ctx context.Context, id string) (*Deployment, error)
+	UpdateStatus(ctx context.Context, id string, status DeploymentStatus, stage string) error
+	UpdateImage(ctx context.Context, id string, image string, imageDigest string) error
+	List(ctx context.Context, projectID string) ([]*Deployment, error)
+}
+
+// InstanceRepository defines storage operations for deployment instances.
+type InstanceRepository interface {
+	Create(ctx context.Context, inst *Instance) error
+	GetByID(ctx context.Context, id string) (*Instance, error)
+	GetByInstanceKey(ctx context.Context, key string) (*Instance, error)
+	ListByDeployment(ctx context.Context, deploymentID string) ([]*Instance, error)
+	ListByWorker(ctx context.Context, workerID string) ([]*Instance, error)
+	Update(ctx context.Context, inst *Instance) error
+	CountByWorkerForDeployment(ctx context.Context, deploymentID string) (map[string]int, error)
+	ListAll(ctx context.Context) ([]*Instance, error)
+}
+
+// MemoryDeploymentRepository is an in-memory implementation of DeploymentRepository.
+type MemoryDeploymentRepository struct {
+	mu          sync.RWMutex
+	deployments map[string]*Deployment
+}
+
+func NewMemoryDeploymentRepository() *MemoryDeploymentRepository {
+	return &MemoryDeploymentRepository{
+		deployments: make(map[string]*Deployment),
+	}
+}
+
+func (r *MemoryDeploymentRepository) Create(ctx context.Context, d *Deployment) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now().UTC()
+	if d.CreatedAt.IsZero() {
+		d.CreatedAt = now
+	}
+	d.UpdatedAt = now
+
+	clone := *d
+	r.deployments[d.ID] = &clone
+	return nil
+}
+
+func (r *MemoryDeploymentRepository) GetByID(ctx context.Context, id string) (*Deployment, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	d, ok := r.deployments[id]
+	if !ok {
+		return nil, ErrDeploymentNotFound
+	}
+	clone := *d
+	return &clone, nil
+}
+
+func (r *MemoryDeploymentRepository) UpdateStatus(ctx context.Context, id string, status DeploymentStatus, stage string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	d, ok := r.deployments[id]
+	if !ok {
+		return ErrDeploymentNotFound
+	}
+	d.Status = status
+	if stage != "" {
+		d.Stage = stage
+	}
+	d.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (r *MemoryDeploymentRepository) UpdateImage(ctx context.Context, id string, image string, imageDigest string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	d, ok := r.deployments[id]
+	if !ok {
+		return ErrDeploymentNotFound
+	}
+	d.Image = image
+	d.ImageDigest = imageDigest
+	d.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (r *MemoryDeploymentRepository) List(ctx context.Context, projectID string) ([]*Deployment, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	res := make([]*Deployment, 0, len(r.deployments))
+	for _, d := range r.deployments {
+		if projectID == "" || d.ProjectID == projectID {
+			clone := *d
+			res = append(res, &clone)
+		}
+	}
+	return res, nil
+}
+
+// MemoryInstanceRepository is an in-memory implementation of InstanceRepository.
+type MemoryInstanceRepository struct {
+	mu        sync.RWMutex
+	instances map[string]*Instance // by ID
+	byKey     map[string]*Instance // by InstanceKey
+}
+
+func NewMemoryInstanceRepository() *MemoryInstanceRepository {
+	return &MemoryInstanceRepository{
+		instances: make(map[string]*Instance),
+		byKey:     make(map[string]*Instance),
+	}
+}
+
+func (r *MemoryInstanceRepository) Create(ctx context.Context, inst *Instance) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now().UTC()
+	if inst.CreatedAt.IsZero() {
+		inst.CreatedAt = now
+	}
+	inst.UpdatedAt = now
+
+	clone := *inst
+	r.instances[inst.ID] = &clone
+	r.byKey[inst.InstanceKey] = &clone
+	return nil
+}
+
+func (r *MemoryInstanceRepository) GetByID(ctx context.Context, id string) (*Instance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	inst, ok := r.instances[id]
+	if !ok {
+		return nil, ErrInstanceNotFound
+	}
+	clone := *inst
+	return &clone, nil
+}
+
+func (r *MemoryInstanceRepository) GetByInstanceKey(ctx context.Context, key string) (*Instance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	inst, ok := r.byKey[key]
+	if !ok {
+		return nil, ErrInstanceNotFound
+	}
+	clone := *inst
+	return &clone, nil
+}
+
+func (r *MemoryInstanceRepository) ListByDeployment(ctx context.Context, deploymentID string) ([]*Instance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	res := make([]*Instance, 0)
+	for _, inst := range r.instances {
+		if inst.DeploymentID == deploymentID {
+			clone := *inst
+			res = append(res, &clone)
+		}
+	}
+	return res, nil
+}
+
+func (r *MemoryInstanceRepository) ListByWorker(ctx context.Context, workerID string) ([]*Instance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	res := make([]*Instance, 0)
+	for _, inst := range r.instances {
+		if inst.WorkerID == workerID {
+			clone := *inst
+			res = append(res, &clone)
+		}
+	}
+	return res, nil
+}
+
+func (r *MemoryInstanceRepository) Update(ctx context.Context, inst *Instance) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	existing, ok := r.instances[inst.ID]
+	if !ok {
+		return ErrInstanceNotFound
+	}
+
+	inst.UpdatedAt = time.Now().UTC()
+	clone := *inst
+	*existing = clone
+	if inst.InstanceKey != "" {
+		r.byKey[inst.InstanceKey] = existing
+	}
+	return nil
+}
+
+func (r *MemoryInstanceRepository) CountByWorkerForDeployment(ctx context.Context, deploymentID string) (map[string]int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	counts := make(map[string]int)
+	for _, inst := range r.instances {
+		if inst.DeploymentID == deploymentID && inst.WorkerID != "" {
+			counts[inst.WorkerID]++
+		}
+	}
+	return counts, nil
+}
+
+func (r *MemoryInstanceRepository) ListAll(ctx context.Context) ([]*Instance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	res := make([]*Instance, 0, len(r.instances))
+	for _, inst := range r.instances {
+		clone := *inst
+		res = append(res, &clone)
+	}
+	return res, nil
+}

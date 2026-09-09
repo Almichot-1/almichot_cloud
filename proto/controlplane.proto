@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package nebula.controlplane;
+
+option go_package = "github.com/nebula/nebula/proto";
+
+service ControlPlaneService {
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc DrainWorker(DrainWorkerRequest) returns (DrainWorkerResponse);
+  rpc CreateDeployment(CreateDeploymentRequest) returns (CreateDeploymentResponse);
+  rpc GetDeployment(GetDeploymentRequest) returns (GetDeploymentResponse);
+}
+
+message RegisterWorkerRequest {
+  string worker_key = 1;
+  string hostname = 2;
+  string ip_address = 3;
+  int32 grpc_port = 4;
+  int32 capacity = 5;
+  map<string, string> labels = 6;
+}
+
+message RegisterWorkerResponse {
+  string worker_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  int64 timestamp = 2;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+  int64 recorded_at = 2;
+}
+
+message DrainWorkerRequest {
+  string worker_id = 1;
+}
+
+message DrainWorkerResponse {
+  string worker_id = 1;
+  bool success = 2;
+  string state = 3;
+}
+
+message CreateDeploymentRequest {
+  string project_id = 1;
+  string image = 2;
+  int32 instance_count = 3;
+  map<string, string> env = 4;
+  map<string, string> labels = 5;
+  string source_path = 6;
+}
+
+message CreateDeploymentResponse {
+  string deployment_id = 1;
+  string status = 2;
+  repeated string instance_ids = 3;
+  string error = 4;
+  string image_digest = 5;
+}
+
+message GetDeploymentRequest {
+  string deployment_id = 1;
+}
+
+message DeploymentInstanceInfo {
+  string instance_id = 1;
+  string worker_id = 2;
+  string status = 3;
+  string container_id = 4;
+}
+
+message GetDeploymentResponse {
+  string deployment_id = 1;
+  string project_id = 2;
+  string image = 3;
+  string status = 4;
+  repeated DeploymentInstanceInfo instances = 5;
+  string error = 6;
+}

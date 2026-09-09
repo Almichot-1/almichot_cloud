@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package nebula.worker;
+
+option go_package = "github.com/nebula/nebula/proto";
+
+service WorkerService {
+  rpc RunContainer(RunContainerRequest) returns (RunContainerResponse);
+  rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
+  rpc GetContainerStatus(GetContainerStatusRequest) returns (GetContainerStatusResponse);
+  rpc ListContainers(ListContainersRequest) returns (ListContainersResponse);
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+}
+
+message PortMapping {
+  int32 host_port = 1;
+  int32 container_port = 2;
+  string protocol = 3;
+}
+
+message RunContainerRequest {
+  string instance_id = 1;
+  string deployment_id = 2;
+  string image = 3;
+  map<string, string> env = 4;
+  repeated PortMapping ports = 5;
+  map<string, string> labels = 6;
+}
+
+message RunContainerResponse {
+  string instance_id = 1;
+  string container_id = 2;
+  string status = 3;
+  string error = 4;
+  bool is_duplicate = 5;
+}
+
+message StopContainerRequest {
+  string instance_id = 1;
+  int64 timeout_seconds = 2;
+}
+
+message StopContainerResponse {
+  string instance_id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message GetContainerStatusRequest {
+  string instance_id = 1;
+}
+
+message GetContainerStatusResponse {
+  string instance_id = 1;
+  string container_id = 2;
+  string status = 3;
+  int32 exit_code = 4;
+  string error = 5;
+}
+
+message ListContainersRequest {
+}
+
+message ContainerInfo {
+  string instance_id = 1;
+  string container_id = 2;
+  string image = 3;
+  string status = 4;
+  map<string, string> labels = 5;
+  int64 created_at = 6;
+}
+
+message ListContainersResponse {
+  repeated ContainerInfo containers = 1;
+}
+
+message RegisterRequest {
+  string worker_id = 1;
+  string hostname = 2;
+  string ip_address = 3;
+  int32 capacity = 4;
+  map<string, string> labels = 5;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string message = 2;
+}

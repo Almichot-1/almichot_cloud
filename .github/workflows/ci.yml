@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  NEBULA_TEST_DATABASE_URL: postgres://postgres:1234567890@localhost:5433/postgres?sslmode=disable
+  GOFLAGS: "-mod=mod"
+
+jobs:
+  lint:
+    name: Lint (gofmt + go vet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt: files not formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: OK"
+      - name: go vet
+        run: go vet ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: go build ./...
+        run: go build ./...
+
+  crossbuild:
+    name: Cross-compile cmd/
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: go build ./cmd/... (${{ matrix.goos }}/${{ matrix.goarch }})
+        run: go build ./cmd/...
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+
+  test:
+    name: Full test suite (Postgres + Docker)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: 1234567890
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: go test ./... -count=1
+        run: go test ./... -count=1
+
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: go test -race (concurrency-critical packages)
+        run: go test -race ./tests/concurrency ./internal/api ./internal/runtime ./internal/secrets ./internal/pki ./internal/observability ./internal/workers -count=1
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: 1234567890
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: Collect coverage
+        run: go test ./... -coverprofile=coverage.out -count=1
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage.out
+          path: coverage.out

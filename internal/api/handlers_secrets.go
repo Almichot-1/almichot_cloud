@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/nebula/nebula/internal/auth"
+	"github.com/nebula/nebula/internal/observability"
 	"github.com/nebula/nebula/internal/secrets"
 )
 
@@ -63,6 +65,17 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actor := "anonymous"
+	if s.auth != nil {
+		if u := auth.UserFromContext(r.Context()); u != nil {
+			actor = u.Username
+		}
+	}
+	s.RecordAudit(r.Context(), observability.EventSecretCreate, actor, projectID+"/"+req.Name, map[string]string{
+		"version":     fmt.Sprintf("%d", sec.Version),
+		"key_version": fmt.Sprintf("%d", sec.KeyVersion),
+	})
+
 	writeJSON(w, http.StatusCreated, SecretResponse{
 		ID:         sec.ID,
 		ProjectID:  sec.ProjectID,
@@ -94,6 +107,16 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	actor := "anonymous"
+	if s.auth != nil {
+		if u := auth.UserFromContext(r.Context()); u != nil {
+			actor = u.Username
+		}
+	}
+	s.RecordAudit(r.Context(), observability.EventSecretAccess, actor, projectID+"/secrets", map[string]string{
+		"count": fmt.Sprintf("%d", len(list)),
+	})
 
 	res := make([]SecretResponse, 0, len(list))
 	for _, sec := range list {
@@ -147,6 +170,17 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	actor := "anonymous"
+	if s.auth != nil {
+		if u := auth.UserFromContext(r.Context()); u != nil {
+			actor = u.Username
+		}
+	}
+	s.RecordAudit(r.Context(), observability.EventSecretRotate, actor, projectID+"/"+secretName, map[string]string{
+		"key_version": fmt.Sprintf("%d", sec.KeyVersion),
+		"version":     fmt.Sprintf("%d", sec.Version),
+	})
 
 	writeJSON(w, http.StatusOK, SecretResponse{
 		ID:         sec.ID,

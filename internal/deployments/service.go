@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nebula/nebula/internal/build"
 	"github.com/nebula/nebula/internal/loadbalancer"
+	"github.com/nebula/nebula/internal/observability"
 	"github.com/nebula/nebula/internal/registry"
 	"github.com/nebula/nebula/internal/scheduler"
 	"github.com/nebula/nebula/internal/secrets"
@@ -396,6 +397,12 @@ func (s *Service) CreateAndDeploy(ctx context.Context, params CreateDeploymentPa
 		params.InstanceCount = 1
 	}
 
+	// Distributed Tracing: API leg (§22, Gate G-39)
+	ctx, _ = observability.EnsureTraceID(ctx)
+	ctx, apiSpan := observability.StartSpan(ctx, "api.create_deployment")
+	defer apiSpan.End()
+	startDeployTime := time.Now()
+
 	// Serialize concurrent deployments targeting the same project (RACE-01, Gate G-21).
 	// Different projects execute concurrently without contention (DL-08).
 	lock := s.getProjectLock(params.ProjectID)
@@ -455,13 +462,19 @@ func (s *Service) CreateAndDeploy(ctx context.Context, params CreateDeploymentPa
 
 		imageTag := fmt.Sprintf("nebula/%s:%s", params.ProjectID, depID[:8])
 		var err error
-		buildRes, err = s.builder.BuildFromSource(ctx, params.ProjectID, params.SourcePath, imageTag, params.Env)
+		buildCtx, buildSpan := observability.StartSpan(ctx, "build.orchestrate")
+		buildRes, err = s.builder.BuildFromSource(buildCtx, params.ProjectID, params.SourcePath, imageTag, params.Env)
+		buildSpan.End()
 		if err != nil {
 			dep.Status = StatusFailed
 			dep.Stage = "BUILD_FAILED"
 			if uErr := s.depRepo.UpdateStatus(ctx, depID, StatusFailed, "BUILD_FAILED"); uErr != nil {
 				s.log.Error().Err(uErr).Str("deployment_id", depID).Msg("failed to update deployment status to BUILD_FAILED")
 			}
+			observability.MetricDeploymentStatusTotal.Inc(map[string]string{
+				"status":     string(StatusFailed),
+				"project_id": dep.ProjectID,
+			})
 			return dep, nil, fmt.Errorf("build failed: %w", err)
 		}
 
@@ -557,6 +570,11 @@ func (s *Service) CreateAndDeploy(ctx context.Context, params CreateDeploymentPa
 	if err != nil {
 		return dep, createdInstances, err
 	}
+
+	observability.MetricDeploymentDurationSeconds.Observe(map[string]string{
+		"project_id": dep.ProjectID,
+		"status":     string(dep.Status),
+	}, time.Since(startDeployTime).Seconds())
 
 	s.log.Info().
 		Str("deployment_id", depID).
@@ -655,11 +673,13 @@ func (s *Service) scheduleAndDispatchInstances(
 		}
 
 		// Select worker via Scheduler
-		targetWorker, err := s.sched.SelectWorker(ctx, scheduler.WorkloadRequirement{
+		schedCtx, schedSpan := observability.StartSpan(ctx, "scheduler.place")
+		targetWorker, err := s.sched.SelectWorker(schedCtx, scheduler.WorkloadRequirement{
 			DeploymentID:     depID,
 			RequiredCapacity: 1,
 			RequiredLabels:   dep.Labels,
 		})
+		schedSpan.End()
 		if err != nil {
 			inst.Status = "FAILED"
 			if uErr := s.instRepo.Update(ctx, inst); uErr != nil {
@@ -668,9 +688,17 @@ func (s *Service) scheduleAndDispatchInstances(
 			if uErr := s.depRepo.UpdateStatus(ctx, depID, StatusFailed, "SCHEDULING_FAILED"); uErr != nil {
 				s.log.Error().Err(uErr).Str("deployment_id", depID).Msg("failed to update deployment status to SCHEDULING_FAILED")
 			}
+			observability.MetricDeploymentStatusTotal.Inc(map[string]string{"status": string(StatusFailed), "project_id": dep.ProjectID})
 			dep.Status = StatusFailed
 			dep.Stage = "SCHEDULING_FAILED"
 			return createdInstances, fmt.Errorf("scheduler failed for instance %s: %w", instKey, err)
+		}
+
+		if targetWorker != nil {
+			observability.MetricSchedulerPlacementTotal.Inc(map[string]string{
+				"worker_id": targetWorker.ID,
+				"strategy":  "SPREADING",
+			})
 		}
 
 		// Dispatch RunContainer to worker
@@ -683,6 +711,7 @@ func (s *Service) scheduleAndDispatchInstances(
 			if uErr := s.depRepo.UpdateStatus(ctx, depID, StatusFailed, "FAILED"); uErr != nil {
 				s.log.Error().Err(uErr).Str("deployment_id", depID).Msg("failed to update deployment status to FAILED")
 			}
+			observability.MetricDeploymentStatusTotal.Inc(map[string]string{"status": string(StatusFailed), "project_id": dep.ProjectID})
 			dep.Status = StatusFailed
 			dep.Stage = "FAILED"
 			return createdInstances, fmt.Errorf("failed to connect to worker %s: %w", targetWorker.WorkerKey, err)
@@ -716,7 +745,8 @@ func (s *Service) scheduleAndDispatchInstances(
 			runLabels["nebula.signature"] = signature
 		}
 
-		runResp, err := client.RunContainer(ctx, &proto.RunContainerRequest{
+		workerCtx, workerSpan := observability.StartSpan(ctx, "worker.run_container")
+		runResp, err := client.RunContainer(workerCtx, &proto.RunContainerRequest{
 			InstanceId:   instKey,
 			DeploymentId: depID,
 			Image:        dep.Image,
@@ -724,6 +754,8 @@ func (s *Service) scheduleAndDispatchInstances(
 			Labels:       runLabels,
 			Ports:        ports,
 		})
+		workerSpan.End()
+
 		if err != nil || (runResp != nil && runResp.Error != "") {
 			inst.Status = "FAILED"
 			if uErr := s.instRepo.Update(ctx, inst); uErr != nil {
@@ -739,6 +771,13 @@ func (s *Service) scheduleAndDispatchInstances(
 			if strings.Contains(strings.ToLower(errMsg), "registry") && strings.Contains(strings.ToLower(errMsg), "unavailable") {
 				failStage = "REGISTRY_UNAVAILABLE"
 			}
+			if strings.Contains(strings.ToLower(errMsg), "pull") || strings.Contains(strings.ToLower(errMsg), "digest") || strings.Contains(strings.ToLower(errMsg), "image") {
+				observability.MetricImagePullFailureTotal.Inc(map[string]string{
+					"image_ref": dep.Image,
+					"reason":    "pull_failed",
+				})
+			}
+			observability.MetricDeploymentStatusTotal.Inc(map[string]string{"status": string(StatusFailed), "project_id": dep.ProjectID})
 			if uErr := s.depRepo.UpdateStatus(ctx, depID, StatusFailed, failStage); uErr != nil {
 				s.log.Error().Err(uErr).Str("deployment_id", depID).Msg("failed to update deployment status to " + failStage)
 			}
@@ -786,6 +825,11 @@ func (s *Service) scheduleAndDispatchInstances(
 	if err := s.depRepo.UpdateStatus(ctx, depID, StatusRunning, "RUNNING"); err != nil {
 		s.log.Error().Err(err).Str("deployment_id", depID).Msg("failed to update deployment status to RUNNING")
 	}
+
+	observability.MetricDeploymentStatusTotal.Inc(map[string]string{
+		"status":     string(StatusRunning),
+		"project_id": dep.ProjectID,
+	})
 
 	if s.crashHook != nil {
 		if err := s.crashHook(StatusRunning); err != nil {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nebula/nebula/internal/observability"
 	"github.com/rs/zerolog"
 )
 
@@ -19,7 +20,7 @@ func (rw *responseWriter) WriteHeader(status int) {
 	rw.ResponseWriter.WriteHeader(status)
 }
 
-// requestID injects a request ID header and adds it to the request context.
+// requestID injects request and trace IDs and sets them on context and response headers (§22, Gate G-39).
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rid := r.Header.Get("X-Request-ID")
@@ -27,7 +28,13 @@ func requestID(next http.Handler) http.Handler {
 			rid = uuid.New().String()[:8]
 		}
 		w.Header().Set("X-Request-ID", rid)
-		next.ServeHTTP(w, r)
+
+		// Distributed Tracing context propagation (§22, Gate G-39)
+		ctx := observability.ExtractHTTPHeaders(r.Context(), r.Header)
+		ctx, tid := observability.EnsureTraceID(ctx)
+		w.Header().Set(observability.HeaderTraceID, tid)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -39,11 +46,15 @@ func requestLogger(log zerolog.Logger) func(http.Handler) http.Handler {
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rw, r)
 
-			log.Info().
+			tid := observability.TraceIDFromContext(r.Context())
+			subLog := log.Info().
 				Str("method", r.Method).
 				Str("path", r.URL.Path).
-				Str("request_id", rw.Header().Get("X-Request-ID")).
-				Int("status", rw.status).
+				Str("request_id", rw.Header().Get("X-Request-ID"))
+			if tid != "" {
+				subLog = subLog.Str("trace_id", tid)
+			}
+			subLog.Int("status", rw.status).
 				Dur("duration_ms", time.Since(start).Round(time.Millisecond)).
 				Msg("http request handled")
 		})

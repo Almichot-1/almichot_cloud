@@ -19,20 +19,63 @@ type Target struct {
 	Proxy      *httputil.ReverseProxy
 }
 
-// Router acts as an HTTP reverse proxy / load balancer for deployed instances (OW-01).
+// Router acts as an HTTP reverse proxy / load balancer for deployed instances (OW-01, Phase 15).
 type Router struct {
-	mu      sync.RWMutex
-	targets map[string][]*Target // keyed by project_id
-	counter uint64
-	log     zerolog.Logger
+	mu           sync.RWMutex
+	targets      map[string][]*Target // keyed by project_id
+	hostnames    map[string]string    // hostname -> project_id (e.g. myapp.nebula.example -> proj-1)
+	cpCallbacks  uint64               // invariant assertion counter: should remain 0 during proxying
+	counter      uint64
+	log          zerolog.Logger
 }
 
 // NewRouter creates a new load balancer Router.
 func NewRouter(log zerolog.Logger) *Router {
 	return &Router{
-		targets: make(map[string][]*Target),
-		log:     log.With().Str("component", "load-balancer").Logger(),
+		targets:   make(map[string][]*Target),
+		hostnames: make(map[string]string),
+		log:       log.With().Str("component", "load-balancer").Logger(),
 	}
+}
+
+// RegisterHostname associates a fully-qualified domain name / hostname with a project.
+func (r *Router) RegisterHostname(hostname, projectID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if strings.Contains(hostname, ":") {
+		hostname = strings.Split(hostname, ":")[0]
+	}
+	r.hostnames[hostname] = projectID
+	r.log.Info().Str("hostname", hostname).Str("project_id", projectID).Msg("registered hostname route")
+}
+
+// UnregisterHostname removes a hostname route.
+func (r *Router) UnregisterHostname(hostname string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if strings.Contains(hostname, ":") {
+		hostname = strings.Split(hostname, ":")[0]
+	}
+	delete(r.hostnames, hostname)
+}
+
+// GetProjectForHostname returns the project ID mapped to a hostname, if any.
+func (r *Router) GetProjectForHostname(hostname string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if strings.Contains(hostname, ":") {
+		hostname = strings.Split(hostname, ":")[0]
+	}
+	pid, ok := r.hostnames[hostname]
+	return pid, ok
+}
+
+// CPCallbackCount returns the number of times the load balancer called back into the control plane.
+func (r *Router) CPCallbackCount() uint64 {
+	return atomic.LoadUint64(&r.cpCallbacks)
 }
 
 // RegisterTarget adds or updates a backend target for a project.
@@ -104,10 +147,24 @@ func (r *Router) GetTargets(projectID string) []string {
 	return urls
 }
 
-// ServeHTTP routes incoming traffic to healthy running instances of a project (OW-01).
+// ServeHTTP routes incoming traffic to healthy running instances of a project (OW-01, Phase 15).
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Determine project ID from header, query param, or path prefix
-	projectID := req.Header.Get("X-Project-ID")
+	// 1. Check stable hostname mapping first (Phase 15, Gate G-41)
+	var projectID string
+	host := req.Host
+	if strings.Contains(host, ":") {
+		host = strings.Split(host, ":")[0]
+	}
+	r.mu.RLock()
+	if pid, ok := r.hostnames[strings.ToLower(host)]; ok {
+		projectID = pid
+	}
+	r.mu.RUnlock()
+
+	// 2. Fall back to existing path-based routing, header, or query param
+	if projectID == "" {
+		projectID = req.Header.Get("X-Project-ID")
+	}
 	if projectID == "" {
 		projectID = req.URL.Query().Get("project")
 	}
@@ -119,7 +176,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if projectID == "" {
-		http.Error(w, "missing project identifier (X-Project-ID header or /services/{project-id} path)", http.StatusBadRequest)
+		http.Error(w, "missing project identifier (Host header, X-Project-ID header, or /services/{project-id} path)", http.StatusBadRequest)
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nebula/nebula/internal/build"
+	"github.com/nebula/nebula/internal/ha"
 	"github.com/nebula/nebula/internal/loadbalancer"
 	"github.com/nebula/nebula/internal/observability"
 	"github.com/nebula/nebula/internal/registry"
@@ -275,6 +276,7 @@ type Service struct {
 	projectLocks   sync.Map // projectID -> *sync.Mutex (RACE-01, Gate G-21)
 	secretStore    secrets.SecretStore
 	redactor       *secrets.Redactor
+	haElector      *ha.Elector
 	log            zerolog.Logger
 }
 
@@ -307,6 +309,16 @@ func NewService(
 		router:         loadbalancer.NewRouter(log),
 		log:            log.With().Str("component", "deployment-service").Logger(),
 	}
+}
+
+// SetHAElector configures the high-availability leader election coordinator (Phase 16, Gate G-44).
+func (s *Service) SetHAElector(e *ha.Elector) {
+	s.haElector = e
+}
+
+// HAElector returns the configured high-availability leader election coordinator.
+func (s *Service) HAElector() *ha.Elector {
+	return s.haElector
 }
 
 // SetCrashHook attaches a callback that can simulate a crash at specific deployment stages (DL-02, G-16..G-20).
@@ -402,6 +414,14 @@ func (s *Service) CreateAndDeploy(ctx context.Context, params CreateDeploymentPa
 	ctx, apiSpan := observability.StartSpan(ctx, "api.create_deployment")
 	defer apiSpan.End()
 	startDeployTime := time.Now()
+
+	// HA Fencing check (Phase 16, Gate G-44):
+	// Non-leader or standby instances cannot issue scheduling decisions or mutate deployment states.
+	if s.haElector != nil {
+		if _, err := s.haElector.RecordDecision(); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// Serialize concurrent deployments targeting the same project (RACE-01, Gate G-21).
 	// Different projects execute concurrently without contention (DL-08).

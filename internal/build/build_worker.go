@@ -152,6 +152,15 @@ func (n *BuildWorkerNode) Kill() {
 	if n.killed.CompareAndSwap(false, true) {
 		close(n.stopBeatCh)
 		n.log.Warn().Str("worker_key", n.cfg.WorkerKey).Msg("build worker killed / terminated")
+
+		n.mu.RLock()
+		reg := n.registry
+		key := n.cfg.WorkerKey
+		n.mu.RUnlock()
+
+		if reg != nil {
+			_, _ = reg.Drain(context.Background(), key)
+		}
 	}
 }
 

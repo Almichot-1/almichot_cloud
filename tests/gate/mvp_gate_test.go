@@ -23,6 +23,7 @@ import (
 	"github.com/nebula/nebula/internal/autoscaler"
 	"github.com/nebula/nebula/internal/build"
 	"github.com/nebula/nebula/internal/deployments"
+	"github.com/nebula/nebula/internal/ha"
 	"github.com/nebula/nebula/internal/loadbalancer"
 	"github.com/nebula/nebula/internal/observability"
 	"github.com/nebula/nebula/internal/pki"
@@ -2128,8 +2129,285 @@ func TestMVP_GateRun_G01_to_G28(t *testing.T) {
 		t.Log("✅ G-42 PASSED: rate-limited tenant receives 429s with complete isolation from unaffected tenants")
 	})
 
+	t.Run("G-43_StandbyPromotionZeroWorkerDisruption", func(t *testing.T) {
+		// G-43: killing the active CP promotes the standby within a bounded window with zero worker-side disruption
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		lockProvider := ha.NewMemoryAdvisoryLock(500 * time.Millisecond)
+
+		sharedWorkerRepo := workers.NewMemoryWorkerRepository()
+		sharedDepRepo := deployments.NewMemoryDeploymentRepository()
+		sharedInstRepo := deployments.NewMemoryInstanceRepository()
+
+		// Register 2 multi-worker nodes
+		wReg := workers.NewRegistry(sharedWorkerRepo, c.log)
+		_, _ = wReg.Register(ctx, workers.RegisterParams{
+			WorkerKey: "ha-worker-1",
+			Hostname:  "ha-node-1",
+			IPAddress: "192.168.1.51",
+			Capacity:  10,
+		})
+		_, _ = wReg.Register(ctx, workers.RegisterParams{
+			WorkerKey: "ha-worker-2",
+			Hostname:  "ha-node-2",
+			IPAddress: "192.168.1.52",
+			Capacity:  10,
+		})
+
+		// Helper to construct CP instance
+		makeCP := func(id string) (*deployments.Service, *ha.Elector, *atomic.Bool) {
+			r := workers.NewRegistry(sharedWorkerRepo, c.log)
+			s := scheduler.NewScheduler(r, sharedInstRepo.CountByWorkerForDeployment, c.log)
+			mf := deployments.NewMockWorkerClientFactory()
+			ds := deployments.NewService(sharedDepRepo, sharedInstRepo, r, s, mf, c.log)
+			rc := reconcile.NewReconciler(r, sharedDepRepo, sharedInstRepo, s, mf, c.log)
+			rc.SetRouter(c.router)
+
+			reconciled := &atomic.Bool{}
+			elector := ha.NewElector(ha.ElectorConfig{
+				LockID:       ha.DefaultAdvisoryLockID,
+				OwnerID:      id,
+				PollInterval: 15 * time.Millisecond,
+				RenewTimeout: 40 * time.Millisecond,
+				LockProvider: lockProvider,
+				Log:          c.log,
+			})
+			elector.OnPromoted(func(pCtx context.Context) {
+				_, _ = rc.ReconcileOnce(pCtx)
+				reconciled.Store(true)
+			})
+			ds.SetHAElector(elector)
+			return ds, elector, reconciled
+		}
+
+		cp1Service, cp1Elector, _ := makeCP("cp-1")
+		cp2Service, cp2Elector, cp2Reconciled := makeCP("cp-2")
+
+		cp1Elector.Start(ctx)
+		g43Deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(g43Deadline) {
+			if cp1Elector.IsLeader() {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !cp1Elector.IsLeader() {
+			t.Fatal("G-43 VIOLATION: Expected cp-1 to acquire initial leadership")
+		}
+
+		cp2Elector.Start(ctx)
+		time.Sleep(20 * time.Millisecond)
+		if cp2Elector.IsLeader() {
+			t.Fatal("G-43 VIOLATION: Expected cp-2 to be hot standby")
+		}
+
+		// Deploy workload on active CP-1
+		dep, insts, err := cp1Service.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+			ProjectID:     "live-proj-g43",
+			Image:         "registry.nebula/app:v1",
+			InstanceCount: 2,
+		})
+		if err != nil || len(insts) != 2 || dep.Status != deployments.StatusRunning {
+			t.Fatalf("G-43 VIOLATION: failed initial deployment on cp-1: err=%v", err)
+		}
+
+		// Standby cannot accept scheduling calls while CP-1 is active
+		_, _, err = cp2Service.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+			ProjectID:     "blocked-g43",
+			Image:         "registry.nebula/app:v1",
+			InstanceCount: 1,
+		})
+		if err == nil || !errors.Is(err, ha.ErrNotLeader) {
+			t.Fatalf("G-43 VIOLATION: Standby CP-2 accepted scheduling call while CP-1 was leader: %v", err)
+		}
+
+		// Kill active CP-1 process (simulate sudden crash)
+		killStartTime := time.Now()
+		cp1Elector.Stop()
+
+		// Measure time until standby is promoted
+		failoverDeadline := time.Now().Add(500 * time.Millisecond)
+		promoted := false
+		for time.Now().Before(failoverDeadline) {
+			if cp2Elector.IsLeader() {
+				promoted = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		failoverDuration := time.Since(killStartTime)
+		if !promoted {
+			t.Fatalf("G-43 VIOLATION: Standby CP-2 failed to promote within bounded window (elapsed=%v)", failoverDuration)
+		}
+
+		// Verify zero worker disruption:
+		// 1. Running instances unaffected
+		for _, inst := range insts {
+			stored, err := sharedInstRepo.GetByID(ctx, inst.ID)
+			if err != nil || stored.Status != "RUNNING" {
+				t.Fatalf("G-43 VIOLATION: Instance %s disrupted during failover: status=%s, err=%v", inst.ID, stored.Status, err)
+			}
+		}
+
+		// 2. Workers remain registered and healthy
+		wList, err := sharedWorkerRepo.List(ctx)
+		if err != nil || len(wList) != 2 {
+			t.Fatalf("G-43 VIOLATION: Worker registry lost nodes during failover: count=%d", len(wList))
+		}
+
+		// 3. Newly promoted leader executed §20.3 reconciliation
+		time.Sleep(25 * time.Millisecond)
+		if !cp2Reconciled.Load() {
+			t.Fatal("G-43 VIOLATION: Standby CP-2 did not execute §20.3 reconciliation pass upon promotion")
+		}
+
+		// 4. Standby can now schedule new workloads
+		newDep, newInsts, err := cp2Service.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+			ProjectID:     "post-failover-g43",
+			Image:         "registry.nebula/app:v2",
+			InstanceCount: 1,
+		})
+		if err != nil || len(newInsts) != 1 || newDep.Status != deployments.StatusRunning {
+			t.Fatalf("G-43 VIOLATION: Promoted CP-2 failed to schedule post-failover deployment: %v", err)
+		}
+
+		t.Logf("✅ G-43 PASSED: killing active CP promoted standby in %v with zero worker disruption", failoverDuration)
+	})
+
+	t.Run("G-44_NoSplitBrainSchedulingExclusion", func(t *testing.T) {
+		// G-44: no split-brain — only one CP instance ever issues scheduling decisions at a time
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		lockProvider := ha.NewMemoryAdvisoryLock(150 * time.Millisecond)
+
+		sharedWorkerRepo := workers.NewMemoryWorkerRepository()
+		sharedDepRepo := deployments.NewMemoryDeploymentRepository()
+		sharedInstRepo := deployments.NewMemoryInstanceRepository()
+
+		wReg := workers.NewRegistry(sharedWorkerRepo, c.log)
+		_, _ = wReg.Register(ctx, workers.RegisterParams{
+			WorkerKey: "ha-node-g44",
+			Hostname:  "node-g44",
+			IPAddress: "192.168.1.61",
+			Capacity:  20,
+		})
+
+		makeCP := func(id string) (*deployments.Service, *ha.Elector) {
+			r := workers.NewRegistry(sharedWorkerRepo, c.log)
+			s := scheduler.NewScheduler(r, sharedInstRepo.CountByWorkerForDeployment, c.log)
+			mf := deployments.NewMockWorkerClientFactory()
+			ds := deployments.NewService(sharedDepRepo, sharedInstRepo, r, s, mf, c.log)
+			elector := ha.NewElector(ha.ElectorConfig{
+				LockID:       ha.DefaultAdvisoryLockID,
+				OwnerID:      id,
+				PollInterval: 15 * time.Millisecond,
+				RenewTimeout: 40 * time.Millisecond,
+				LockProvider: lockProvider,
+				Log:          c.log,
+			})
+			ds.SetHAElector(elector)
+			return ds, elector
+		}
+
+		cp1Service, cp1Elector := makeCP("cp-1")
+		cp2Service, cp2Elector := makeCP("cp-2")
+
+		cp1Elector.Start(ctx)
+		g44Deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(g44Deadline) {
+			if cp1Elector.IsLeader() {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !cp1Elector.IsLeader() {
+			t.Fatal("G-44 VIOLATION: Expected cp-1 to start as leader")
+		}
+
+		cp2Elector.Start(ctx)
+
+		// Issue decisions on CP-1
+		for i := 0; i < 3; i++ {
+			_, _, err := cp1Service.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+				ProjectID:     fmt.Sprintf("g44-cp1-%d", i),
+				Image:         "registry.nebula/app:v1",
+				InstanceCount: 1,
+			})
+			if err != nil {
+				t.Fatalf("G-44: cp-1 deploy failed: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		// Partition CP-1 from Postgres (simulate network partition / lock loss without process crash)
+		lockProvider.Partition("cp-1", true)
+
+		// Wait for CP-1 to step down and CP-2 to promote
+		time.Sleep(200 * time.Millisecond)
+
+		if cp1Elector.IsLeader() {
+			t.Fatal("G-44 VIOLATION: partitioned CP-1 did not step down!")
+		}
+		if !cp2Elector.IsLeader() {
+			t.Fatal("G-44 VIOLATION: CP-2 was not promoted after partition!")
+		}
+
+		// Issue decisions on CP-2
+		for i := 0; i < 3; i++ {
+			_, _, err := cp2Service.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+				ProjectID:     fmt.Sprintf("g44-cp2-%d", i),
+				Image:         "registry.nebula/app:v2",
+				InstanceCount: 1,
+			})
+			if err != nil {
+				t.Fatalf("G-44: cp-2 deploy failed: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		// Verify Split-Brain Invariant: strictly disjoint scheduling windows
+		decisions1 := cp1Elector.GetDecisions()
+		decisions2 := cp2Elector.GetDecisions()
+
+		if len(decisions1) == 0 || len(decisions2) == 0 {
+			t.Fatalf("G-44 VIOLATION: missing decisions: cp1=%d, cp2=%d", len(decisions1), len(decisions2))
+		}
+
+		maxCP1 := decisions1[0].Timestamp
+		for _, d := range decisions1 {
+			if d.Timestamp.After(maxCP1) {
+				maxCP1 = d.Timestamp
+			}
+		}
+
+		minCP2 := decisions2[0].Timestamp
+		for _, d := range decisions2 {
+			if d.Timestamp.Before(minCP2) {
+				minCP2 = d.Timestamp
+			}
+		}
+
+		if !maxCP1.Before(minCP2) {
+			t.Fatalf("G-44 VIOLATION: Split-brain detected! Scheduling windows overlap: max(CP1)=%v, min(CP2)=%v", maxCP1, minCP2)
+		}
+
+		// Assert partitioned CP-1 is strictly fenced and cannot schedule decisions
+		_, _, err := cp1Service.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+			ProjectID:     "fenced-split-test",
+			Image:         "registry.nebula/app:v1",
+			InstanceCount: 1,
+		})
+		if err == nil || !errors.Is(err, ha.ErrNotLeader) {
+			t.Fatalf("G-44 VIOLATION: Partitioned CP-1 was not fenced from scheduling: %v", err)
+		}
+
+		t.Logf("✅ G-44 PASSED: zero split-brain overlap verified: max(CP1)=%v < min(CP2)=%v with strict fencing", maxCP1.Format(time.RFC3339Nano), minCP2.Format(time.RFC3339Nano))
+	})
+
 	t.Log("=========================================================================")
-	t.Log("🎉 ALL 42 GATES (G-01 THROUGH G-42) PASSED GREEN IN ONE CONTINUOUS RUN! 🎉")
+	t.Log("🎉 ALL 44 GATES (G-01 THROUGH G-44) PASSED GREEN IN ONE CONTINUOUS RUN! 🎉")
 	t.Log("=========================================================================")
 }
 
@@ -2164,6 +2442,10 @@ func TestMVP_GateRun_G01_to_G37(t *testing.T) {
 }
 
 func TestMVP_GateRun_G01_to_G42(t *testing.T) {
+	TestMVP_GateRun_G01_to_G28(t)
+}
+
+func TestMVP_GateRun_G01_to_G44(t *testing.T) {
 	TestMVP_GateRun_G01_to_G28(t)
 }
 

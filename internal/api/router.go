@@ -21,10 +21,11 @@ type Server struct {
 	registry    *workers.Registry
 	router      *loadbalancer.Router
 	idempotency *IdempotencyStore
-	auth        auth.Authenticator
-	secretStore secrets.SecretStore
-	redactor    *secrets.Redactor
-	autoscaler  *autoscaler.Autoscaler
+	auth         auth.Authenticator
+	secretStore  secrets.SecretStore
+	redactor     *secrets.Redactor
+	autoscaler   *autoscaler.Autoscaler
+	enforceHTTPS bool
 }
 
 // NewServer creates the HTTP control plane Server.
@@ -63,6 +64,11 @@ func (s *Server) SetRedactor(r *secrets.Redactor) {
 // SetAutoscaler configures the autoscaler instance (§18).
 func (s *Server) SetAutoscaler(a *autoscaler.Autoscaler) {
 	s.autoscaler = a
+}
+
+// SetEnforceHTTPS configures whether HTTPS redirection and strict checking are enforced (§21.1, Phase 13).
+func (s *Server) SetEnforceHTTPS(enforce bool) {
+	s.enforceHTTPS = enforce
 }
 
 // NewRouter builds the full HTTP handler tree with middleware applied.
@@ -125,5 +131,6 @@ func NewRouter(s *Server) http.Handler {
 	handler = requestLogger(s.log)(handler)
 	handler = requestID(handler)
 	handler = recoverer(handler)
+	handler = RequireHTTPS(s.enforceHTTPS)(handler)
 	return handler
 }

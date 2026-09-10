@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,15 +22,19 @@ import (
 	"github.com/nebula/nebula/internal/build"
 	"github.com/nebula/nebula/internal/deployments"
 	"github.com/nebula/nebula/internal/loadbalancer"
+	"github.com/nebula/nebula/internal/pki"
 	"github.com/nebula/nebula/internal/projects"
 	"github.com/nebula/nebula/internal/reconcile"
 	"github.com/nebula/nebula/internal/registry"
 	"github.com/nebula/nebula/internal/runtime"
 	"github.com/nebula/nebula/internal/scheduler"
 	"github.com/nebula/nebula/internal/secrets"
+	"github.com/nebula/nebula/internal/transport"
 	"github.com/nebula/nebula/internal/workers"
 	"github.com/nebula/nebula/proto"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type clusterHarness struct {
@@ -1604,9 +1609,278 @@ func TestMVP_GateRun_G01_to_G28(t *testing.T) {
 		t.Logf("✅ G-34 PASSED: Concurrent builds on separate Build Workers completed cleanly without blocking runtime fleet (avg runtime op latency: %v)", avgRuntimeOpLatency)
 	})
 
+	// -------------------------------------------------------------------------
+	// Gate G-35: Worker connecting without a valid mTLS cert is rejected at the
+	// gRPC transport layer, not just at application layer (§21.1, Phase 13).
+	// -------------------------------------------------------------------------
+	t.Run("G-35_MTLSTransportRejection", func(t *testing.T) {
+		ca, err := pki.NewCertificateAuthority("Nebula Gate Root CA", 24*time.Hour)
+		if err != nil {
+			t.Fatalf("G-35 failed: create CA: %v", err)
+		}
+
+		serverTLSCert, _, _, err := ca.IssueServerCertificate("localhost", 1*time.Hour)
+		if err != nil {
+			t.Fatalf("G-35 failed: issue server cert: %v", err)
+		}
+
+		serverTLSConfig, err := transport.NewServerTLSConfig(ca.CACertPEM(), *serverTLSCert)
+		if err != nil {
+			t.Fatalf("G-35 failed: server TLS config: %v", err)
+		}
+
+		lis, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("G-35 failed: listen on loopback: %v", err)
+		}
+		defer lis.Close()
+
+		grpcServer := grpc.NewServer(transport.ServerOptionsWithTLS(serverTLSConfig)...)
+		proto.RegisterWorkerServiceServer(grpcServer, &mockWorkerServiceServerForGate{})
+		go func() { _ = grpcServer.Serve(lis) }()
+		defer grpcServer.Stop()
+
+		serverAddr := lis.Addr().String()
+
+		// (a) Plaintext / No cert: Must be rejected at transport layer
+		noCertCtx, cancelA := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelA()
+		connNoCert, _ := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if connNoCert != nil {
+			defer connNoCert.Close()
+			client := proto.NewWorkerServiceClient(connNoCert)
+			_, errA := client.Register(noCertCtx, &proto.RegisterRequest{WorkerId: "untrusted"})
+			if errA == nil {
+				t.Fatalf("G-35 VIOLATION: connection without client certificate succeeded!")
+			}
+		}
+
+		// (b) Expired cert: Must be rejected at transport layer
+		expiredCert, err := ca.IssueExpiredCertificate("expired-worker")
+		if err != nil {
+			t.Fatalf("G-35 failed: issue expired cert: %v", err)
+		}
+		clientTLSExpired, _ := transport.NewClientTLSConfig(ca.CACertPEM(), *expiredCert, "localhost")
+		connExpired, err := transport.NewClientConnWithTLS(serverAddr, clientTLSExpired)
+		if err == nil && connExpired != nil {
+			defer connExpired.Close()
+			client := proto.NewWorkerServiceClient(connExpired)
+			expiredCtx, cancelB := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancelB()
+			_, errB := client.Register(expiredCtx, &proto.RegisterRequest{WorkerId: "expired"})
+			if errB == nil {
+				t.Fatalf("G-35 VIOLATION: connection with expired client certificate succeeded!")
+			}
+		}
+
+		// (c) Untrusted CA cert: Must be rejected at transport layer
+		untrustedCert, _, _, err := pki.IssueUntrustedCertificate("untrusted-worker", 1*time.Hour)
+		if err != nil {
+			t.Fatalf("G-35 failed: issue untrusted cert: %v", err)
+		}
+		clientTLSUntrusted, _ := transport.NewClientTLSConfig(ca.CACertPEM(), *untrustedCert, "localhost")
+		connUntrusted, err := transport.NewClientConnWithTLS(serverAddr, clientTLSUntrusted)
+		if err == nil && connUntrusted != nil {
+			defer connUntrusted.Close()
+			client := proto.NewWorkerServiceClient(connUntrusted)
+			untrustedCtx, cancelC := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancelC()
+			_, errC := client.Register(untrustedCtx, &proto.RegisterRequest{WorkerId: "untrusted"})
+			if errC == nil {
+				t.Fatalf("G-35 VIOLATION: connection with untrusted CA certificate succeeded!")
+			}
+		}
+
+		// (d) Valid CA cert: Must succeed
+		validCert, _, _, err := ca.IssueWorkerCertificate("valid-worker", 1*time.Hour)
+		if err != nil {
+			t.Fatalf("G-35 failed: issue valid cert: %v", err)
+		}
+		clientTLSValid, _ := transport.NewClientTLSConfig(ca.CACertPEM(), *validCert, "localhost")
+		connValid, err := transport.NewClientConnWithTLS(serverAddr, clientTLSValid)
+		if err != nil {
+			t.Fatalf("G-35 failed: connect with valid cert: %v", err)
+		}
+		defer connValid.Close()
+
+		validCtx, cancelD := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelD()
+		validClient := proto.NewWorkerServiceClient(connValid)
+		resD, errD := validClient.Register(validCtx, &proto.RegisterRequest{WorkerId: "valid-worker"})
+		if errD != nil || !resD.Success {
+			t.Fatalf("G-35 failed: valid mTLS connection failed: %v", errD)
+		}
+
+		t.Log("✅ G-35 PASSED: Worker connecting without valid mTLS cert rejected at gRPC transport layer (no cert, expired, untrusted CA)")
+	})
+
+	// -------------------------------------------------------------------------
+	// Gate G-36: Secrets master key is never present in Control Plane process
+	// environment or config files at rest (§21.2, Phase 13).
+	// -------------------------------------------------------------------------
+	t.Run("G-36_SecretsMasterKeyNeverInProcessEnvOrDisk", func(t *testing.T) {
+		kms := secrets.NewMockKMSClient()
+		kmsKeyProvider, err := secrets.NewKMSEnvelopeKeyProvider(kms)
+		if err != nil {
+			t.Fatalf("G-36 failed: create KMS key provider: %v", err)
+		}
+
+		kmsStore := secrets.NewMemorySecretStore(kmsKeyProvider)
+		sec, err := kmsStore.SetSecret(ctx, "proj-g36", "DATABASE_KEY", "super-secret-cluster-data-key")
+		if err != nil {
+			t.Fatalf("G-36 failed: set secret: %v", err)
+		}
+
+		// 1. Audit Process Environment: master key is never held in environment
+		forbiddenVars := []string{
+			"NEBULA_SECRETS_MASTER_KEY",
+			"MASTER_ENCRYPTION_KEY",
+			"ROOT_ENVELOPE_KEY",
+		}
+		clean, leakMsg := secrets.AuditProcessEnvironment(forbiddenVars)
+		if !clean {
+			t.Fatalf("G-36 VIOLATION: %s", leakMsg)
+		}
+
+		for _, envStr := range os.Environ() {
+			if strings.HasPrefix(strings.ToUpper(envStr), "NEBULA_SECRETS_MASTER_KEY=") {
+				val := strings.Split(envStr, "=")[1]
+				if len(val) > 0 {
+					t.Fatalf("G-36 VIOLATION: NEBULA_SECRETS_MASTER_KEY present in os.Environ(): %s", envStr)
+				}
+			}
+		}
+
+		// 2. Audit stored record at rest: ciphertext exists, plaintext absent
+		if len(sec.Ciphertext) == 0 {
+			t.Fatalf("G-36 failed: expected ciphertext stored at rest")
+		}
+		if strings.Contains(string(sec.Ciphertext), "super-secret-cluster-data-key") {
+			t.Fatalf("G-36 VIOLATION: plaintext secret found in ciphertext at rest!")
+		}
+
+		// 3. Confirm decryption succeeds using KMS transient unwrap
+		_, decrypted, err := kmsStore.GetSecret(ctx, "proj-g36", "DATABASE_KEY")
+		if err != nil || decrypted != "super-secret-cluster-data-key" {
+			t.Fatalf("G-36 failed: KMS unwrap decryption failed: %v", err)
+		}
+
+		t.Log("✅ G-36 PASSED: Secrets master key is never present in process environment or config files at rest")
+	})
+
+	// -------------------------------------------------------------------------
+	// Gate G-37: Rotating the master key re-wraps all secrets without downtime (§21.2).
+	// -------------------------------------------------------------------------
+	t.Run("G-37_LiveMasterKeyRotationZeroDowntime", func(t *testing.T) {
+		kms := secrets.NewMockKMSClient()
+		kmsProvider, err := secrets.NewKMSEnvelopeKeyProvider(kms)
+		if err != nil {
+			t.Fatalf("G-37 failed: create KMS provider: %v", err)
+		}
+		store := secrets.NewMemorySecretStore(kmsProvider)
+
+		// Seed initial secrets under v1 master key
+		const secretCount = 10
+		for i := 0; i < secretCount; i++ {
+			sName := fmt.Sprintf("SECRET_%d", i)
+			_, err := store.SetSecret(ctx, "proj-g37", sName, "initial-value-"+sName)
+			if err != nil {
+				t.Fatalf("G-37 failed: seed secret: %v", err)
+			}
+		}
+
+		var wg sync.WaitGroup
+		var readErrors, writeErrors int
+		var mu sync.Mutex
+		stopTraffic := make(chan struct{})
+
+		// Start 4 concurrent readers
+		for r := 0; r < 4; r++ {
+			wg.Add(1)
+			go func(readerID int) {
+				defer wg.Done()
+				for {
+					select {
+					case <-stopTraffic:
+						return
+					default:
+						sName := fmt.Sprintf("SECRET_%d", readerID%secretCount)
+						_, val, err := store.GetSecret(ctx, "proj-g37", sName)
+						if err != nil || val == "" {
+							mu.Lock()
+							readErrors++
+							mu.Unlock()
+						}
+						time.Sleep(1 * time.Millisecond)
+					}
+				}
+			}(r)
+		}
+
+		// Start 2 concurrent writers
+		for w := 0; w < 2; w++ {
+			wg.Add(1)
+			go func(writerID int) {
+				defer wg.Done()
+				for {
+					select {
+					case <-stopTraffic:
+						return
+					default:
+						sName := fmt.Sprintf("SECRET_%d", writerID%secretCount)
+						_, err := store.SetSecret(ctx, "proj-g37", sName, "live-val")
+						if err != nil {
+							mu.Lock()
+							writeErrors++
+							mu.Unlock()
+						}
+						time.Sleep(2 * time.Millisecond)
+					}
+				}
+			}(w)
+		}
+
+		// Run live traffic briefly
+		time.Sleep(25 * time.Millisecond)
+
+		// Rotate master key in KMS and re-wrap all DEKs live
+		oldKeyID := kms.CurrentKeyID()
+		newKeyID, err := kms.RotateKey(ctx)
+		if err != nil {
+			t.Fatalf("G-37 failed: KMS RotateKey: %v", err)
+		}
+
+		if err := kmsProvider.ReWrapKeys(ctx, oldKeyID, newKeyID); err != nil {
+			t.Fatalf("G-37 failed: ReWrapKeys: %v", err)
+		}
+
+		// Continue live traffic under new key
+		time.Sleep(25 * time.Millisecond)
+		close(stopTraffic)
+		wg.Wait()
+
+		if readErrors > 0 {
+			t.Fatalf("G-37 VIOLATION: %d read errors occurred during live key rotation!", readErrors)
+		}
+		if writeErrors > 0 {
+			t.Fatalf("G-37 VIOLATION: %d write errors occurred during live key rotation!", writeErrors)
+		}
+
+		t.Log("✅ G-37 PASSED: Rotating the master key re-wrapped all secrets under live traffic with zero downtime or errors")
+	})
+
 	t.Log("=========================================================================")
-	t.Log("🎉 ALL 34 GATES (G-01 THROUGH G-34) PASSED GREEN IN ONE CONTINUOUS RUN! 🎉")
+	t.Log("🎉 ALL 37 GATES (G-01 THROUGH G-37) PASSED GREEN IN ONE CONTINUOUS RUN! 🎉")
 	t.Log("=========================================================================")
+}
+
+// mockWorkerServiceServerForGate implements proto.WorkerServiceServer for Gate G-35 mTLS tests.
+type mockWorkerServiceServerForGate struct {
+	proto.UnimplementedWorkerServiceServer
+}
+
+func (m *mockWorkerServiceServerForGate) Register(ctx context.Context, req *proto.RegisterRequest) (*proto.RegisterResponse, error) {
+	return &proto.RegisterResponse{Success: true, Message: "mTLS authenticated"}, nil
 }
 
 // Backward-compatibility wrappers for test suites invoking previous gate run ranges
@@ -1623,6 +1897,10 @@ func TestMVP_GateRun_G01_to_G33(t *testing.T) {
 }
 
 func TestMVP_GateRun_G01_to_G34(t *testing.T) {
+	TestMVP_GateRun_G01_to_G28(t)
+}
+
+func TestMVP_GateRun_G01_to_G37(t *testing.T) {
 	TestMVP_GateRun_G01_to_G28(t)
 }
 

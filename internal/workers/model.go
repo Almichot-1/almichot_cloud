@@ -70,3 +70,28 @@ func (w *Worker) Address() string {
 	}
 	return fmt.Sprintf("%s:%d", w.IPAddress, w.GRPCPort)
 }
+
+const (
+	CapabilityBuild   = "build"
+	CapabilityRuntime = "runtime"
+)
+
+// Capability returns the primary capability tag of the worker (default: "runtime") (§9.3, Phase 12).
+func (w *Worker) Capability() string {
+	if w.Labels != nil {
+		if capVal, ok := w.Labels["capability"]; ok && capVal != "" {
+			return capVal
+		}
+	}
+	return CapabilityRuntime
+}
+
+// IsBuildWorker returns true if this worker has capability=build (§9.3, Phase 12).
+func (w *Worker) IsBuildWorker() bool {
+	return w.Capability() == CapabilityBuild
+}
+
+// IsRuntimeWorker returns true if this worker is dedicated to running container workloads.
+func (w *Worker) IsRuntimeWorker() bool {
+	return !w.IsBuildWorker()
+}

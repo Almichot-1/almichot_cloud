@@ -27,12 +27,15 @@ type ProjectCreateRequest struct {
 
 // ProjectResponse is the API representation of a project.
 type ProjectResponse struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	RepoURL     string `json:"repo_url"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	RepoURL         string `json:"repo_url"`
+	DesiredReplicas int    `json:"desired_replicas,omitempty"`
+	MinReplicas     int    `json:"min_replicas,omitempty"`
+	MaxReplicas     int    `json:"max_replicas,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 // DeploymentCreateRequest is the body for triggering a deployment.
@@ -60,18 +63,19 @@ type InstanceResponse struct {
 
 // DeploymentResponse is the API representation of a deployment.
 type DeploymentResponse struct {
-	ID            string             `json:"id"`
-	ProjectID     string             `json:"project_id"`
-	Revision      string             `json:"revision"`
-	Image         string             `json:"image"`
-	ImageDigest   string             `json:"image_digest"`
-	DesiredState  string             `json:"desired_state"`
-	Status        string             `json:"status"`
-	Stage         string             `json:"stage"`
-	InstanceCount int                `json:"instance_count"`
-	Instances     []InstanceResponse `json:"instances,omitempty"`
-	CreatedAt     string             `json:"created_at"`
-	UpdatedAt     string             `json:"updated_at"`
+	ID              string             `json:"id"`
+	ProjectID       string             `json:"project_id"`
+	Revision        string             `json:"revision"`
+	Image           string             `json:"image"`
+	ImageDigest     string             `json:"image_digest"`
+	DesiredState    string             `json:"desired_state"`
+	Status          string             `json:"status"`
+	Stage           string             `json:"stage"`
+	InstanceCount   int                `json:"instance_count"`
+	DesiredReplicas int                `json:"desired_replicas,omitempty"`
+	Instances       []InstanceResponse `json:"instances,omitempty"`
+	CreatedAt       string             `json:"created_at"`
+	UpdatedAt       string             `json:"updated_at"`
 }
 
 // WorkerResponse is the API representation of a registered worker.
@@ -91,12 +95,15 @@ type WorkerResponse struct {
 
 func newProjectResponse(p *projects.Project) ProjectResponse {
 	return ProjectResponse{
-		ID:          p.ID,
-		Name:        p.Name,
-		Description: p.Description,
-		RepoURL:     p.RepoURL,
-		CreatedAt:   p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		ID:              p.ID,
+		Name:            p.Name,
+		Description:     p.Description,
+		RepoURL:         p.RepoURL,
+		DesiredReplicas: p.DesiredReplicas,
+		MinReplicas:     p.MinReplicas,
+		MaxReplicas:     p.MaxReplicas,
+		CreatedAt:       p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:       p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 }
 
@@ -115,17 +122,18 @@ func newInstanceResponse(inst *deployments.Instance) InstanceResponse {
 
 func newDeploymentResponse(dep *deployments.Deployment, instances []*deployments.Instance) DeploymentResponse {
 	resp := DeploymentResponse{
-		ID:            dep.ID,
-		ProjectID:     dep.ProjectID,
-		Revision:      dep.Revision,
-		Image:         dep.Image,
-		ImageDigest:   dep.ImageDigest,
-		DesiredState:  dep.DesiredState,
-		Status:        string(dep.Status),
-		Stage:         dep.Stage,
-		InstanceCount: dep.InstanceCount,
-		CreatedAt:     dep.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:     dep.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		ID:              dep.ID,
+		ProjectID:       dep.ProjectID,
+		Revision:        dep.Revision,
+		Image:           dep.Image,
+		ImageDigest:     dep.ImageDigest,
+		DesiredState:    dep.DesiredState,
+		Status:          string(dep.Status),
+		Stage:           dep.Stage,
+		InstanceCount:   dep.InstanceCount,
+		DesiredReplicas: dep.DesiredReplicas,
+		CreatedAt:       dep.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:       dep.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	for _, inst := range instances {
 		resp.Instances = append(resp.Instances, newInstanceResponse(inst))

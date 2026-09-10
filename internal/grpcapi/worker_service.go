@@ -10,8 +10,24 @@ import (
 	"github.com/nebula/nebula/proto"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// authorizeRuntimeCaller verifies that the caller does not belong to a build worker
+// identity, enforcing §14 / §21.3 invariant that build execution has no gRPC control-path access.
+func authorizeRuntimeCaller(ctx context.Context) error {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		for _, key := range []string{"role", "capability", "x-nebula-role", "x-nebula-capability"} {
+			for _, val := range md.Get(key) {
+				if strings.EqualFold(val, "build") {
+					return status.Errorf(codes.PermissionDenied, "build worker identity is not authorized to invoke container control-path operations (§14, §21.3)")
+				}
+			}
+		}
+	}
+	return nil
+}
 
 // WorkerServiceServer implements the proto.WorkerServiceServer interface.
 type WorkerServiceServer struct {
@@ -38,6 +54,9 @@ var _ proto.WorkerServiceServer = (*WorkerServiceServer)(nil)
 
 // RunContainer starts a container for an instance or returns the existing container if already running (G-09).
 func (s *WorkerServiceServer) RunContainer(ctx context.Context, req *proto.RunContainerRequest) (*proto.RunContainerResponse, error) {
+	if err := authorizeRuntimeCaller(ctx); err != nil {
+		return nil, err
+	}
 	if req.InstanceId == "" {
 		return nil, status.Error(codes.InvalidArgument, "instance_id is required")
 	}
@@ -110,6 +129,9 @@ func (s *WorkerServiceServer) RunContainer(ctx context.Context, req *proto.RunCo
 
 // StopContainer stops an instance's container.
 func (s *WorkerServiceServer) StopContainer(ctx context.Context, req *proto.StopContainerRequest) (*proto.StopContainerResponse, error) {
+	if err := authorizeRuntimeCaller(ctx); err != nil {
+		return nil, err
+	}
 	if req.InstanceId == "" {
 		return nil, status.Error(codes.InvalidArgument, "instance_id is required")
 	}
@@ -156,6 +178,9 @@ func (s *WorkerServiceServer) GetContainerStatus(ctx context.Context, req *proto
 
 // ListContainers lists all containers tracked on this worker.
 func (s *WorkerServiceServer) ListContainers(ctx context.Context, req *proto.ListContainersRequest) (*proto.ListContainersResponse, error) {
+	if err := authorizeRuntimeCaller(ctx); err != nil {
+		return nil, err
+	}
 	if client := s.ops.Client(); client != nil {
 		summaries, err := client.ListContainers(ctx)
 		if err == nil {

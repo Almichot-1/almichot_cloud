@@ -393,6 +393,7 @@ func TestRI01_RealWorkerDeathDetection(t *testing.T) {
 
 	// Terminate Worker 1's heartbeat sender and kill Worker 1 process
 	close(stopW1Heartbeats)
+	_ = reg.Heartbeat(ctx, w1.key)
 	killTime := time.Now()
 	w1.kill()
 	t.Logf("RI-01: Worker 1 killed at %v; awaiting real elapsed heartbeat timeout...", killTime.Format(time.RFC3339))

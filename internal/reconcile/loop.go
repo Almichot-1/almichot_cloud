@@ -8,6 +8,7 @@ import (
 
 	"github.com/nebula/nebula/internal/deployments"
 	"github.com/nebula/nebula/internal/discovery"
+	"github.com/nebula/nebula/internal/loadbalancer"
 	"github.com/nebula/nebula/internal/scheduler"
 	"github.com/nebula/nebula/internal/workers"
 	"github.com/nebula/nebula/proto"
@@ -33,10 +34,10 @@ func (a *ReconcileActions) TotalActions() int {
 	return a.RecreatedCount + a.StoppedCount + a.MigratedCount
 }
 
-// Reconciler handles state convergence:
-// - Self-healing missing containers (G-01, G-23).
-// - Idempotent reconciliation (G-02).
-// - Orphan policy enforcement: managed stopped, unknown flagged (G-03).
+// Reconciler is the core state convergence engine.
+// Periodically reconciles desired state vs. actual state across all registered workers:
+// - Orphan container detection and cleanup (G-03, CP-04, CP-06).
+// - Crash and missing container recreation (G-01, G-11, G-23, DA-03).
 // - CP restart state alignment (G-04, G-24).
 // - Strict replica count invariant (G-11).
 // - Periodic convergence interval loop (RCN-01).
@@ -50,6 +51,7 @@ type Reconciler struct {
 	clientFactory   deployments.WorkerClientFactory
 	repairService   *RepairService
 	serviceRegistry *discovery.ServiceRegistry
+	router          *loadbalancer.Router
 	interval        time.Duration
 	timeout         time.Duration
 	log             zerolog.Logger
@@ -108,6 +110,13 @@ func (r *Reconciler) SetServiceRegistry(sr *discovery.ServiceRegistry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.serviceRegistry = sr
+}
+
+// SetRouter registers the loadbalancer router for target updates (§18).
+func (r *Reconciler) SetRouter(router *loadbalancer.Router) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.router = router
 }
 
 // ReconcileOnce executes a single full convergence pass across all active deployments and workers.
@@ -266,14 +275,68 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) (*ReconcileActions, erro
 				if targetWorker != nil {
 					addr = "http://" + targetWorker.Address()
 				}
-				_ = r.serviceRegistry.RegisterEndpoint(cycleCtx, discovery.Endpoint{
+				if err := r.serviceRegistry.RegisterEndpoint(cycleCtx, discovery.Endpoint{
 					InstanceID:   missing.InstanceID,
 					DeploymentID: missing.DeploymentID,
 					ProjectID:    dep.ProjectID,
 					WorkerID:     repairRes.WorkerID,
 					Address:      addr,
 					Status:       discovery.EndpointHealthy,
-				})
+				}); err != nil {
+					r.log.Error().Err(err).
+						Str("instance_id", missing.InstanceID).
+						Str("project_id", dep.ProjectID).
+						Msg("failed to register endpoint in service registry")
+				}
+			}
+		}
+	}
+
+	// -------------------------------------------------------------
+	// 5b. Prune Excess Replicas beyond Desired Count (§18, G-11)
+	// -------------------------------------------------------------
+	for depID, runningCount := range runningCountByDep {
+		dep := activeDeployments[depID]
+		if dep == nil {
+			continue
+		}
+		desiredCount := 1
+		if dep.InstanceCount > 0 {
+			desiredCount = dep.InstanceCount
+		}
+		if runningCount > desiredCount {
+			excess := runningCount - desiredCount
+			stoppedForDep := 0
+			for i := len(diff.Matching) - 1; i >= 0 && stoppedForDep < excess; i-- {
+				match := diff.Matching[i]
+				if match.Desired.DeploymentID == depID {
+					client := workerClients[match.Observed.WorkerID]
+					if client == nil {
+						client = workerClients[match.Observed.WorkerKey]
+					}
+					if client != nil {
+						_, _ = client.StopContainer(cycleCtx, &proto.StopContainerRequest{
+							InstanceId:     match.Observed.InstanceKey,
+							TimeoutSeconds: 5,
+						})
+					}
+					if inst, gErr := r.instRepo.GetByInstanceKey(cycleCtx, match.Observed.InstanceKey); gErr == nil && inst != nil {
+						inst.Status = "STOPPED"
+						_ = r.instRepo.Update(cycleCtx, inst)
+					} else if inst, gErr := r.instRepo.GetByID(cycleCtx, match.Desired.InstanceID); gErr == nil && inst != nil {
+						inst.Status = "STOPPED"
+						_ = r.instRepo.Update(cycleCtx, inst)
+					}
+					if r.serviceRegistry != nil {
+						r.serviceRegistry.UnregisterEndpoint(cycleCtx, match.Desired.InstanceID)
+					}
+					if r.router != nil && dep.ProjectID != "" {
+						r.router.UnregisterTarget(dep.ProjectID, match.Desired.InstanceID)
+					}
+					actions.StoppedCount++
+					stoppedForDep++
+					runningCountByDep[depID]--
+				}
 			}
 		}
 	}
@@ -420,10 +483,19 @@ func (r *Reconciler) ReconcileDraining(ctx context.Context) (int, error) {
 
 			drainingClient, err := r.clientFactory.GetClient(ctx, w)
 			if err == nil {
-				_, _ = drainingClient.StopContainer(ctx, &proto.StopContainerRequest{
+				if _, stopErr := drainingClient.StopContainer(ctx, &proto.StopContainerRequest{
 					InstanceId:     inst.InstanceKey,
 					TimeoutSeconds: 10,
-				})
+				}); stopErr != nil {
+					r.log.Warn().Err(stopErr).
+						Str("instance_key", inst.InstanceKey).
+						Str("from_worker", w.WorkerKey).
+						Msg("failed to stop old container on draining worker after migration")
+				}
+			} else {
+				r.log.Warn().Err(err).
+					Str("from_worker", w.WorkerKey).
+					Msg("failed to get client to stop container on draining worker")
 			}
 
 			r.log.Info().

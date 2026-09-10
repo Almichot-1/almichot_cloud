@@ -123,7 +123,9 @@ func (e *RecoveryEngine) RecoverDeployments(ctx context.Context, policy Recovery
 			// CP-CRASH-02 (Gate G-17) & DL-04: CP crash while BUILDING
 			// Partial build artifact from crashed BUILDING stage must NOT be reused.
 			// Reset image and digest to prevent trusting incomplete artifacts (DL-04).
-			_ = e.depRepo.UpdateImage(ctx, dep.ID, "", "")
+			if err := e.depRepo.UpdateImage(ctx, dep.ID, "", ""); err != nil {
+				e.log.Error().Err(err).Str("deployment_id", dep.ID).Msg("failed to clear image on building recovery")
+			}
 			err := e.depRepo.UpdateStatus(ctx, dep.ID, StatusFailed, "BUILD_INTERRUPTED_CP_CRASH")
 			if err != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("dep %s (BUILDING): %v", dep.ID, err))
@@ -139,7 +141,9 @@ func (e *RecoveryEngine) RecoverDeployments(ctx context.Context, policy Recovery
 			for _, inst := range instances {
 				if inst.Status == "PENDING" {
 					inst.Status = "FAILED"
-					_ = e.instRepo.Update(ctx, inst)
+					if uErr := e.instRepo.Update(ctx, inst); uErr != nil {
+						e.log.Error().Err(uErr).Str("instance_id", inst.ID).Msg("failed to update pending instance to FAILED")
+					}
 				}
 			}
 
@@ -162,7 +166,9 @@ func (e *RecoveryEngine) RecoverDeployments(ctx context.Context, policy Recovery
 			instances, _ := e.instRepo.ListByDeployment(ctx, dep.ID)
 			for _, inst := range instances {
 				inst.Status = "FAILED"
-				_ = e.instRepo.Update(ctx, inst)
+				if uErr := e.instRepo.Update(ctx, inst); uErr != nil {
+					e.log.Error().Err(uErr).Str("instance_id", inst.ID).Msg("failed to update instance to FAILED")
+				}
 			}
 
 			err := e.depRepo.UpdateStatus(ctx, dep.ID, StatusFailed, "STARTUP_INTERRUPTED_CP_CRASH")
@@ -178,7 +184,9 @@ func (e *RecoveryEngine) RecoverDeployments(ctx context.Context, policy Recovery
 
 		default:
 			// Other in-flight states
-			_ = e.depRepo.UpdateStatus(ctx, dep.ID, StatusFailed, "INTERRUPTED_CP_CRASH")
+			if err := e.depRepo.UpdateStatus(ctx, dep.ID, StatusFailed, "INTERRUPTED_CP_CRASH"); err != nil {
+				e.log.Error().Err(err).Str("deployment_id", dep.ID).Msg("failed to update status to INTERRUPTED_CP_CRASH")
+			}
 		}
 	}
 

@@ -22,16 +22,26 @@ func NewPostgresProjectRepository(pool *pgxpool.Pool) *PostgresProjectRepository
 }
 
 func (r *PostgresProjectRepository) Create(ctx context.Context, p *projects.Project) error {
+	if p.DesiredReplicas <= 0 {
+		p.DesiredReplicas = 1
+	}
+	if p.MinReplicas <= 0 {
+		p.MinReplicas = 1
+	}
+	if p.MaxReplicas <= 0 {
+		p.MaxReplicas = 10
+	}
+
 	query := `
-		INSERT INTO projects (name, description, repo_url, webhook_secret)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO projects (name, description, repo_url, webhook_secret, desired_replicas, min_replicas, max_replicas)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (name) DO NOTHING
 		RETURNING id, created_at, updated_at;
 	`
 
 	var id string
 	var createdAt, updatedAt time.Time
-	err := r.pool.QueryRow(ctx, query, p.Name, p.Description, p.RepoURL, p.WebhookSecret).Scan(&id, &createdAt, &updatedAt)
+	err := r.pool.QueryRow(ctx, query, p.Name, p.Description, p.RepoURL, p.WebhookSecret, p.DesiredReplicas, p.MinReplicas, p.MaxReplicas).Scan(&id, &createdAt, &updatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create project: %w", err)
 	}
@@ -42,9 +52,30 @@ func (r *PostgresProjectRepository) Create(ctx context.Context, p *projects.Proj
 	return nil
 }
 
+func (r *PostgresProjectRepository) UpdateScale(ctx context.Context, id string, desired, min, max int) error {
+	query := `
+		UPDATE projects
+		SET desired_replicas = CASE WHEN $1 > 0 THEN $1 ELSE desired_replicas END,
+		    min_replicas = CASE WHEN $2 > 0 THEN $2 ELSE min_replicas END,
+		    max_replicas = CASE WHEN $3 > 0 THEN $3 ELSE max_replicas END,
+		    updated_at = now()
+		WHERE id = $4;
+	`
+	tag, err := r.pool.Exec(ctx, query, desired, min, max, id)
+	if err != nil {
+		return fmt.Errorf("failed to update project scale: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return projects.ErrProjectNotFound
+	}
+	return nil
+}
+
 func (r *PostgresProjectRepository) GetByID(ctx context.Context, id string) (*projects.Project, error) {
 	query := `
-		SELECT id, name, description, repo_url, COALESCE(webhook_secret, ''), created_at, updated_at
+		SELECT id, name, description, repo_url, COALESCE(webhook_secret, ''),
+		       COALESCE(desired_replicas, 1), COALESCE(min_replicas, 1), COALESCE(max_replicas, 10),
+		       created_at, updated_at
 		FROM projects
 		WHERE id = $1;
 	`
@@ -53,7 +84,9 @@ func (r *PostgresProjectRepository) GetByID(ctx context.Context, id string) (*pr
 
 func (r *PostgresProjectRepository) GetByName(ctx context.Context, name string) (*projects.Project, error) {
 	query := `
-		SELECT id, name, description, repo_url, COALESCE(webhook_secret, ''), created_at, updated_at
+		SELECT id, name, description, repo_url, COALESCE(webhook_secret, ''),
+		       COALESCE(desired_replicas, 1), COALESCE(min_replicas, 1), COALESCE(max_replicas, 10),
+		       created_at, updated_at
 		FROM projects
 		WHERE name = $1;
 	`
@@ -62,7 +95,9 @@ func (r *PostgresProjectRepository) GetByName(ctx context.Context, name string) 
 
 func (r *PostgresProjectRepository) List(ctx context.Context) ([]*projects.Project, error) {
 	query := `
-		SELECT id, name, description, repo_url, COALESCE(webhook_secret, ''), created_at, updated_at
+		SELECT id, name, description, repo_url, COALESCE(webhook_secret, ''),
+		       COALESCE(desired_replicas, 1), COALESCE(min_replicas, 1), COALESCE(max_replicas, 10),
+		       created_at, updated_at
 		FROM projects
 		ORDER BY created_at ASC;
 	`
@@ -75,7 +110,7 @@ func (r *PostgresProjectRepository) List(ctx context.Context) ([]*projects.Proje
 	var result []*projects.Project
 	for rows.Next() {
 		var p projects.Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoURL, &p.WebhookSecret, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoURL, &p.WebhookSecret, &p.DesiredReplicas, &p.MinReplicas, &p.MaxReplicas, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, &p)
@@ -85,7 +120,7 @@ func (r *PostgresProjectRepository) List(ctx context.Context) ([]*projects.Proje
 
 func (r *PostgresProjectRepository) scanProject(row pgx.Row) (*projects.Project, error) {
 	var p projects.Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.RepoURL, &p.WebhookSecret, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.RepoURL, &p.WebhookSecret, &p.DesiredReplicas, &p.MinReplicas, &p.MaxReplicas, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, projects.ErrProjectNotFound

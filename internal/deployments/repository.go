@@ -5,11 +5,14 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
 	ErrDeploymentNotFound = errors.New("deployment not found")
 	ErrInstanceNotFound   = errors.New("instance not found")
+	ErrReleaseNotFound    = errors.New("release not found")
 )
 
 // DeploymentRepository defines storage operations for deployments.
@@ -18,6 +21,7 @@ type DeploymentRepository interface {
 	GetByID(ctx context.Context, id string) (*Deployment, error)
 	UpdateStatus(ctx context.Context, id string, status DeploymentStatus, stage string) error
 	UpdateImage(ctx context.Context, id string, image string, imageDigest string) error
+	UpdateScale(ctx context.Context, id string, replicaCount int) error
 	List(ctx context.Context, projectID string) ([]*Deployment, error)
 }
 
@@ -98,6 +102,20 @@ func (r *MemoryDeploymentRepository) UpdateImage(ctx context.Context, id string,
 	}
 	d.Image = image
 	d.ImageDigest = imageDigest
+	d.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (r *MemoryDeploymentRepository) UpdateScale(ctx context.Context, id string, replicaCount int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	d, ok := r.deployments[id]
+	if !ok {
+		return ErrDeploymentNotFound
+	}
+	d.InstanceCount = replicaCount
+	d.DesiredReplicas = replicaCount
 	d.UpdatedAt = time.Now().UTC()
 	return nil
 }
@@ -240,3 +258,91 @@ func (r *MemoryInstanceRepository) ListAll(ctx context.Context) ([]*Instance, er
 	}
 	return res, nil
 }
+
+// Release represents an immutable deployment release artifact (§10.1, §19.1, §21.3).
+type Release struct {
+	ID           string    `json:"id"`
+	ProjectID    string    `json:"project_id"`
+	DeploymentID string    `json:"deployment_id"`
+	Version      string    `json:"version"`
+	ImageRef     string    `json:"image_ref"`
+	ImageDigest  string    `json:"image_digest"`
+	Signature    string    `json:"signature"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ReleaseRepository provides access to durable release records.
+type ReleaseRepository interface {
+	Create(ctx context.Context, release *Release) error
+	Get(ctx context.Context, id string) (*Release, error)
+	GetByDigest(ctx context.Context, digest string) (*Release, error)
+	ListByProject(ctx context.Context, projectID string) ([]*Release, error)
+}
+
+// MemoryReleaseRepository is an in-memory implementation of ReleaseRepository.
+type MemoryReleaseRepository struct {
+	mu       sync.RWMutex
+	releases map[string]*Release
+}
+
+func NewMemoryReleaseRepository() *MemoryReleaseRepository {
+	return &MemoryReleaseRepository{
+		releases: make(map[string]*Release),
+	}
+}
+
+func (r *MemoryReleaseRepository) Create(ctx context.Context, rel *Release) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if rel.ID == "" {
+		rel.ID = uuid.New().String()
+	}
+	if rel.CreatedAt.IsZero() {
+		rel.CreatedAt = time.Now().UTC()
+	}
+
+	clone := *rel
+	r.releases[rel.ID] = &clone
+	return nil
+}
+
+func (r *MemoryReleaseRepository) Get(ctx context.Context, id string) (*Release, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	rel, ok := r.releases[id]
+	if !ok {
+		return nil, ErrReleaseNotFound
+	}
+	clone := *rel
+	return &clone, nil
+}
+
+func (r *MemoryReleaseRepository) GetByDigest(ctx context.Context, digest string) (*Release, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, rel := range r.releases {
+		if rel.ImageDigest == digest {
+			clone := *rel
+			return &clone, nil
+		}
+	}
+	return nil, ErrReleaseNotFound
+}
+
+func (r *MemoryReleaseRepository) ListByProject(ctx context.Context, projectID string) ([]*Release, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []*Release
+	for _, rel := range r.releases {
+		if rel.ProjectID == projectID {
+			clone := *rel
+			result = append(result, &clone)
+		}
+	}
+	return result, nil
+}
+

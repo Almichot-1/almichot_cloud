@@ -79,10 +79,11 @@ func TestDL02_EveryStateTransitionPersistedBeforeActing(t *testing.T) {
 		t.Fatalf("expected 1 instance, got %d", len(instances))
 	}
 
-	// Verify the ordered progression of persisted transitions: QUEUED -> BUILDING -> SCHEDULING -> STARTING -> RUNNING
+	// Verify the ordered progression of persisted transitions: QUEUED -> BUILDING -> BUILT -> SCHEDULING -> STARTING -> RUNNING (§8.2)
 	expected := []deployments.DeploymentStatus{
 		deployments.StatusQueued,
 		deployments.StatusBuilding,
+		deployments.StatusBuilt,
 		deployments.StatusScheduling,
 		deployments.StatusStarting,
 		deployments.StatusRunning,

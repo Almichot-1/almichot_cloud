@@ -69,6 +69,14 @@ func (r *Registry) Register(ctx context.Context, params RegisterParams) (*Worker
 		return nil, fmt.Errorf("worker_key is required")
 	}
 
+	if params.Labels != nil {
+		if capVal, ok := params.Labels["capability"]; ok && capVal != "" {
+			if capVal != CapabilityBuild && capVal != CapabilityRuntime {
+				return nil, fmt.Errorf("invalid capability %q: must be %q or %q", capVal, CapabilityBuild, CapabilityRuntime)
+			}
+		}
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -165,7 +173,9 @@ func (r *Registry) HeartbeatAt(ctx context.Context, workerIDOrKey string, at tim
 	workerKey := w.WorkerKey
 	r.mu.Unlock()
 
-	_ = r.repo.UpdateHeartbeat(ctx, workerKey, at)
+	if err := r.repo.UpdateHeartbeat(ctx, workerKey, at); err != nil {
+		r.log.Error().Err(err).Str("worker_key", workerKey).Msg("failed to persist heartbeat to repository")
+	}
 	return nil
 }
 
@@ -193,7 +203,9 @@ func (r *Registry) SetHealthWithReason(ctx context.Context, workerIDOrKey string
 		Str("reason", reason).
 		Msg("worker health state changed")
 
-	_ = r.repo.Upsert(ctx, w)
+	if err := r.repo.Upsert(ctx, w); err != nil {
+		r.log.Error().Err(err).Str("worker_key", w.WorkerKey).Msg("failed to persist worker health state to repository")
+	}
 	clone := *w
 	return &clone, nil
 }
@@ -249,7 +261,9 @@ func (r *Registry) Drain(ctx context.Context, workerIDOrKey string) (*Worker, er
 	w.Schedulable = false
 	w.UpdatedAt = time.Now().UTC()
 
-	_ = r.repo.SetDrain(ctx, w.WorkerKey, true)
+	if err := r.repo.SetDrain(ctx, w.WorkerKey, true); err != nil {
+		r.log.Error().Err(err).Str("worker_key", w.WorkerKey).Msg("failed to persist worker drain state to repository")
+	}
 
 	r.log.Info().
 		Str("worker_key", w.WorkerKey).
@@ -274,7 +288,9 @@ func (r *Registry) Undrain(ctx context.Context, workerIDOrKey string) (*Worker, 
 	w.Schedulable = true
 	w.UpdatedAt = time.Now().UTC()
 
-	_ = r.repo.SetDrain(ctx, w.WorkerKey, false)
+	if err := r.repo.SetDrain(ctx, w.WorkerKey, false); err != nil {
+		r.log.Error().Err(err).Str("worker_key", w.WorkerKey).Msg("failed to persist worker undrain state to repository")
+	}
 
 	clone := *w
 	return &clone, nil
@@ -302,6 +318,36 @@ func (r *Registry) List() []*Worker {
 	for _, w := range r.workers {
 		clone := *w
 		res = append(res, &clone)
+	}
+	return res
+}
+
+// ListBuildWorkers returns all registered workers with capability=build (§9.3, Phase 12).
+func (r *Registry) ListBuildWorkers() []*Worker {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var res []*Worker
+	for _, w := range r.workers {
+		if w.IsBuildWorker() {
+			clone := *w
+			res = append(res, &clone)
+		}
+	}
+	return res
+}
+
+// ListRuntimeWorkers returns all registered workers dedicated to runtime workloads (§9.3, Phase 12).
+func (r *Registry) ListRuntimeWorkers() []*Worker {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var res []*Worker
+	for _, w := range r.workers {
+		if w.IsRuntimeWorker() {
+			clone := *w
+			res = append(res, &clone)
+		}
 	}
 	return res
 }

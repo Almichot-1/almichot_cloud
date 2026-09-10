@@ -179,4 +179,20 @@ func (r *PostgresDeploymentRepository) List(ctx context.Context, projectID strin
 	return result, rows.Err()
 }
 
+func (r *PostgresDeploymentRepository) UpdateScale(ctx context.Context, id string, replicaCount int) error {
+	query := `
+		UPDATE deployments
+		SET instance_count = $1, desired_replicas = $1, updated_at = now()
+		WHERE id = $2;
+	`
+	tag, err := r.pool.Exec(ctx, query, replicaCount, id)
+	if err != nil {
+		return fmt.Errorf("failed to update deployment scale: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return deployments.ErrDeploymentNotFound
+	}
+	return nil
+}
+
 var _ deployments.DeploymentRepository = (*PostgresDeploymentRepository)(nil)

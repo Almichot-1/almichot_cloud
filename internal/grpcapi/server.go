@@ -17,13 +17,13 @@ type Server struct {
 }
 
 // NewServer creates a new gRPC server listening on the specified address.
-func NewServer(addr string, log zerolog.Logger, registerFn func(s *grpc.Server)) (*Server, error) {
+func NewServer(addr string, log zerolog.Logger, registerFn func(s *grpc.Server), opts ...grpc.ServerOption) (*Server, error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(ServerOptions(opts...)...)
 	if registerFn != nil {
 		registerFn(grpcServer)
 	}

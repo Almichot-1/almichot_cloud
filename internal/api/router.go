@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/nebula/nebula/internal/auth"
+	"github.com/nebula/nebula/internal/autoscaler"
 	"github.com/nebula/nebula/internal/deployments"
 	"github.com/nebula/nebula/internal/loadbalancer"
 	"github.com/nebula/nebula/internal/projects"
@@ -23,6 +24,7 @@ type Server struct {
 	auth        auth.Authenticator
 	secretStore secrets.SecretStore
 	redactor    *secrets.Redactor
+	autoscaler  *autoscaler.Autoscaler
 }
 
 // NewServer creates the HTTP control plane Server.
@@ -58,6 +60,11 @@ func (s *Server) SetRedactor(r *secrets.Redactor) {
 	s.redactor = r
 }
 
+// SetAutoscaler configures the autoscaler instance (§18).
+func (s *Server) SetAutoscaler(a *autoscaler.Autoscaler) {
+	s.autoscaler = a
+}
+
 // NewRouter builds the full HTTP handler tree with middleware applied.
 func NewRouter(s *Server) http.Handler {
 	mux := http.NewServeMux()
@@ -66,11 +73,24 @@ func NewRouter(s *Server) http.Handler {
 	mux.HandleFunc("POST /v1/projects", s.createProject)
 	mux.HandleFunc("GET /v1/projects", s.listProjects)
 	mux.HandleFunc("GET /v1/projects/{id}", s.getProject)
+	mux.HandleFunc("POST /v1/projects/{projectID}/scale", s.scaleProject)
 
 	// Deployments
 	mux.HandleFunc("POST /v1/projects/{projectID}/deployments", s.createDeployment)
 	mux.HandleFunc("GET /v1/projects/{projectID}/deployments", s.listDeployments)
 	mux.HandleFunc("GET /v1/deployments/{id}", s.getDeployment)
+	mux.HandleFunc("POST /v1/deployments/{id}/rollback", s.rollbackDeployment)
+	mux.HandleFunc("POST /v1/deployments/{id}/stop", s.stopDeployment)
+	mux.HandleFunc("POST /v1/deployments/{id}/scale", s.scaleDeployment)
+
+	// Autoscaler (§18)
+	mux.HandleFunc("POST /v1/projects/{projectID}/autoscaler/policy", s.setAutoscalerPolicy)
+	mux.HandleFunc("GET /v1/projects/{projectID}/autoscaler/policy", s.getAutoscalerPolicy)
+	mux.HandleFunc("POST /v1/projects/{projectID}/autoscaler/evaluate", s.evaluateAutoscaler)
+
+	// Events (§19.1, §22, §27.2)
+	mux.HandleFunc("GET /v1/projects/{projectID}/events", s.listProjectEvents)
+	mux.HandleFunc("GET /v1/deployments/{id}/events", s.listDeploymentEvents)
 
 	// Webhooks (HMAC-SHA256 signature verified)
 	mux.HandleFunc("POST /v1/projects/{projectID}/webhooks", s.handleProjectWebhook)

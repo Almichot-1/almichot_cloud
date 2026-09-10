@@ -62,6 +62,7 @@ func SanitizeEnvironment(env map[string]string) map[string]string {
 		"PASSWORD",
 		"SECRET",
 		"PRIVATE_KEY",
+		"SIGNING",
 		"TOKEN",
 	}
 

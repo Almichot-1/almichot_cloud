@@ -13,11 +13,12 @@ const (
 	StatusRunning    DeploymentStatus = "RUNNING"
 	StatusFailed     DeploymentStatus = "FAILED"
 	StatusStopped    DeploymentStatus = "STOPPED"
+	StatusRolledBack DeploymentStatus = "ROLLED_BACK"
 )
 
 // IsTerminal returns true if the status represents an end state.
 func (s DeploymentStatus) IsTerminal() bool {
-	return s == StatusRunning || s == StatusFailed || s == StatusStopped
+	return s == StatusRunning || s == StatusFailed || s == StatusStopped || s == StatusRolledBack
 }
 
 // IsInFlight returns true if the deployment was interrupted mid-flight before completion.
@@ -35,11 +36,12 @@ type Deployment struct {
 	DesiredState  string            `json:"desired_state"`
 	Status        DeploymentStatus  `json:"status"`
 	Stage         string            `json:"stage"`
-	InstanceCount int               `json:"instance_count"`
-	Env           map[string]string `json:"env"`
-	Labels        map[string]string `json:"labels"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	InstanceCount   int               `json:"instance_count"`
+	DesiredReplicas int               `json:"desired_replicas"`
+	Env             map[string]string `json:"env"`
+	Labels          map[string]string `json:"labels"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 // Instance represents a single running container instance of a deployment on a worker.

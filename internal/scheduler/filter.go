@@ -63,6 +63,18 @@ func (f *FeasibilityFilter) Filter(candidates []*workers.Worker, req WorkloadReq
 			}
 		}
 
+		// Rule 7: Build vs Runtime fleet separation (§9.3, §14, Phase 12)
+		// Build workers (capability=build) only accept build workloads;
+		// Runtime workers only accept runtime workloads.
+		isBuildReq := req.RequiredLabels != nil && req.RequiredLabels["capability"] == workers.CapabilityBuild
+		isBuildWorker := w.IsBuildWorker()
+		if isBuildReq && !isBuildWorker {
+			continue
+		}
+		if !isBuildReq && isBuildWorker {
+			continue
+		}
+
 		feasible = append(feasible, w)
 	}
 

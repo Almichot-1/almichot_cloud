@@ -233,6 +233,12 @@ func (d *RealDockerClient) RemoveContainer(ctx context.Context, containerID stri
 	return d.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: force})
 }
 
+// RegistryPuller defines registry operations for pulling images on cache miss (§10.2).
+type RegistryPuller interface {
+	HasImage(ctx context.Context, tag string) bool
+	GetDigest(ctx context.Context, tag string) (string, error)
+}
+
 // MockDockerClient provides a thread-safe in-memory Docker simulation for testing and environments without Docker.
 type MockDockerClient struct {
 	mu           sync.RWMutex
@@ -242,6 +248,10 @@ type MockDockerClient struct {
 	FailStart    error
 	FailStop     error
 	FailInspect  error
+	ImageCache   map[string]bool // local image cache (tag or digest -> true)
+	Registry     RegistryPuller  // optional remote registry to pull from on cache miss (G-26)
+	FailPull     error           // simulated pull failure
+	PullCalls    int
 	CreateCalls  int
 	StartCalls   int
 	StopCalls    int
@@ -274,6 +284,33 @@ func NewMockDockerClient() *MockDockerClient {
 func (m *MockDockerClient) CreateContainer(ctx context.Context, opts CreateContainerOptions) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Check local image cache and simulate registry pull on cache miss (G-26, G-27, §10.2)
+	if m.ImageCache != nil {
+		inCache := m.ImageCache[opts.Image]
+		if !inCache && opts.Labels != nil && opts.Labels["nebula.image_digest"] != "" {
+			inCache = m.ImageCache[opts.Labels["nebula.image_digest"]]
+		}
+
+		if !inCache {
+			m.PullCalls++
+			if m.FailPull != nil {
+				return "", fmt.Errorf("failed to pull image %s: %w", opts.Image, m.FailPull)
+			}
+			if m.Registry != nil {
+				digest, err := m.Registry.GetDigest(ctx, opts.Image)
+				if err != nil {
+					return "", fmt.Errorf("failed to pull image %s from registry: %w", opts.Image, err)
+				}
+				if expectedDigest := opts.Labels["nebula.image_digest"]; expectedDigest != "" && digest != expectedDigest {
+					return "", fmt.Errorf("pull digest mismatch: expected %s, got %s", expectedDigest, digest)
+				}
+				m.ImageCache[opts.Image] = true
+			} else {
+				return "", fmt.Errorf("image %s not found in local cache and no registry configured to pull", opts.Image)
+			}
+		}
+	}
 
 	m.CreateCalls++
 	if m.FailCreate != nil {

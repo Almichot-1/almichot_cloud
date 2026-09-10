@@ -44,12 +44,18 @@ type StatusResult struct {
 	Error       string
 }
 
+// ImageVerifier validates container image cryptographic signatures before execution (Gate G-28, §21.3).
+type ImageVerifier interface {
+	Verify(ctx context.Context, image, digest, signature string) error
+}
+
 // ContainerOps orchestrates container lifecycle operations across the Docker client
 // and the local instance tracker.
 type ContainerOps struct {
-	client  DockerClient
-	tracker *InstanceTracker
-	log     zerolog.Logger
+	client   DockerClient
+	tracker  *InstanceTracker
+	verifier ImageVerifier
+	log      zerolog.Logger
 }
 
 // NewContainerOps creates a new ContainerOps instance.
@@ -59,6 +65,11 @@ func NewContainerOps(client DockerClient, tracker *InstanceTracker, log zerolog.
 		tracker: tracker,
 		log:     log,
 	}
+}
+
+// SetVerifier sets the cryptographic image verifier for supply-chain integrity enforcement (G-28).
+func (c *ContainerOps) SetVerifier(v ImageVerifier) {
+	c.verifier = v
 }
 
 // Client returns the underlying DockerClient.
@@ -94,6 +105,40 @@ func (c *ContainerOps) RunContainer(ctx context.Context, opts RunOptions) (*RunR
 				Status:      string(rec.State),
 				IsDuplicate: true,
 			}, nil
+		}
+	}
+
+	// Verify cryptographic signature if verifier is configured (Gate G-28, §21.3).
+	// Reject unsigned or signature-mismatched images before docker run.
+	if c.verifier != nil {
+		var digest, sig string
+		if opts.Labels != nil {
+			digest = opts.Labels["nebula.image_digest"]
+			sig = opts.Labels["nebula.signature"]
+		}
+		if err := c.verifier.Verify(ctx, opts.Image, digest, sig); err != nil {
+			rec := &InstanceRecord{
+				InstanceID:   opts.InstanceID,
+				DeploymentID: opts.DeploymentID,
+				Image:        opts.Image,
+				State:        StateFailed,
+				LastError:    fmt.Sprintf("signature verification rejected: %v", err),
+				Labels:       opts.Labels,
+			}
+			c.tracker.Set(rec)
+
+			c.log.Error().
+				Err(err).
+				Str("instance_id", opts.InstanceID).
+				Str("image", opts.Image).
+				Str("digest", digest).
+				Msg("image signature verification failed; rejected before container creation (G-28)")
+
+			return &RunResult{
+				InstanceID: opts.InstanceID,
+				Status:     string(StateFailed),
+				Error:      rec.LastError,
+			}, err
 		}
 	}
 

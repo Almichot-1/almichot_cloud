@@ -18,6 +18,8 @@ var expectedTables = []string{
 	"workers",
 	"instances",
 	"secrets",
+	"releases",
+	"events",
 }
 
 func adminConn(t *testing.T) (*pgx.Conn, *url.URL) {
@@ -147,6 +149,65 @@ func TestDA00b_MigrationsIdempotent(t *testing.T) {
 	for _, want := range expectedTables {
 		if !tables[want] {
 			t.Errorf("expected table %q to still exist after re-run", want)
+		}
+	}
+}
+
+func TestDA00c_MigrationsReversible(t *testing.T) {
+	admin, u := adminConn(t)
+	defer admin.Close(context.Background())
+
+	dbName, targetURL := createThrowawayDB(t, admin, u)
+	defer dropDB(t, admin, dbName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, targetURL)
+	if err != nil {
+		t.Fatalf("pool for throwaway db: %v", err)
+	}
+	defer pool.Close()
+
+	// 1. Migrate forward
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+	tables, err := existingTables(ctx, pool)
+	if err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	for _, want := range expectedTables {
+		if !tables[want] {
+			t.Fatalf("expected table %q to exist after migrate", want)
+		}
+	}
+
+	// 2. Rollback all migrations
+	if err := RollbackAll(ctx, pool); err != nil {
+		t.Fatalf("RollbackAll failed: %v", err)
+	}
+	tablesAfterRollback, err := existingTables(ctx, pool)
+	if err != nil {
+		t.Fatalf("list tables after rollback: %v", err)
+	}
+	for _, table := range expectedTables {
+		if tablesAfterRollback[table] {
+			t.Errorf("table %q should have been dropped during rollback", table)
+		}
+	}
+
+	// 3. Migrate again from scratch to confirm clean re-application
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("re-Migrate after rollback failed: %v", err)
+	}
+	tablesFinal, err := existingTables(ctx, pool)
+	if err != nil {
+		t.Fatalf("list tables after re-migrate: %v", err)
+	}
+	for _, want := range expectedTables {
+		if !tablesFinal[want] {
+			t.Errorf("expected table %q to exist after re-migrate", want)
 		}
 	}
 }

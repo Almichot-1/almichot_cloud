@@ -13,13 +13,16 @@ var ErrProjectNotFound = errors.New("project not found")
 
 // Project represents an application under deployment.
 type Project struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	RepoURL       string    `json:"repo_url"`
-	WebhookSecret string    `json:"webhook_secret,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description"`
+	RepoURL         string    `json:"repo_url"`
+	WebhookSecret   string    `json:"webhook_secret,omitempty"`
+	DesiredReplicas int       `json:"desired_replicas"`
+	MinReplicas     int       `json:"min_replicas"`
+	MaxReplicas     int       `json:"max_replicas"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // ProjectRepository defines storage operations for projects.
@@ -28,6 +31,7 @@ type ProjectRepository interface {
 	GetByID(ctx context.Context, id string) (*Project, error)
 	GetByName(ctx context.Context, name string) (*Project, error)
 	List(ctx context.Context) ([]*Project, error)
+	UpdateScale(ctx context.Context, id string, desired, min, max int) error
 }
 
 // MemoryProjectRepository is an in-memory implementation of ProjectRepository.
@@ -56,6 +60,16 @@ func (r *MemoryProjectRepository) Create(ctx context.Context, p *Project) error 
 		return errors.New("project name already exists")
 	}
 
+	if p.DesiredReplicas <= 0 {
+		p.DesiredReplicas = 1
+	}
+	if p.MinReplicas <= 0 {
+		p.MinReplicas = 1
+	}
+	if p.MaxReplicas <= 0 {
+		p.MaxReplicas = 10
+	}
+
 	now := time.Now().UTC()
 	p.CreatedAt = now
 	p.UpdatedAt = now
@@ -63,6 +77,32 @@ func (r *MemoryProjectRepository) Create(ctx context.Context, p *Project) error 
 	clone := *p
 	r.projects[p.ID] = &clone
 	r.byName[p.Name] = &clone
+	return nil
+}
+
+func (r *MemoryProjectRepository) UpdateScale(ctx context.Context, id string, desired, min, max int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	p, ok := r.projects[id]
+	if !ok {
+		return ErrProjectNotFound
+	}
+	if desired > 0 {
+		p.DesiredReplicas = desired
+	}
+	if min > 0 {
+		p.MinReplicas = min
+	}
+	if max > 0 {
+		p.MaxReplicas = max
+	}
+	p.UpdatedAt = time.Now().UTC()
+	clone := *p
+	r.projects[id] = &clone
+	if p.Name != "" {
+		r.byName[p.Name] = &clone
+	}
 	return nil
 }
 

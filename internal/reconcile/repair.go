@@ -164,7 +164,11 @@ func (s *RepairService) RepairMissing(
 		// Mark instance status as REPAIR_FAILED in repository
 		if inst, getErr := s.instRepo.GetByInstanceKey(repairCtx, missing.InstanceKey); getErr == nil {
 			inst.Status = "REPAIR_FAILED"
-			_ = s.instRepo.Update(repairCtx, inst)
+			if updErr := s.instRepo.Update(repairCtx, inst); updErr != nil {
+				s.log.Error().Err(updErr).Str("instance_key", missing.InstanceKey).Msg("failed to update instance status to REPAIR_FAILED")
+			}
+		} else {
+			s.log.Error().Err(getErr).Str("instance_key", missing.InstanceKey).Msg("failed to get instance to set REPAIR_FAILED")
 		}
 
 		return &RepairResult{
@@ -179,7 +183,11 @@ func (s *RepairService) RepairMissing(
 	if inst, err := s.instRepo.GetByInstanceKey(repairCtx, missing.InstanceKey); err == nil {
 		inst.WorkerID = targetWorker.ID
 		inst.Status = "RUNNING"
-		_ = s.instRepo.Update(repairCtx, inst)
+		if updErr := s.instRepo.Update(repairCtx, inst); updErr != nil {
+			s.log.Error().Err(updErr).Str("instance_key", missing.InstanceKey).Msg("failed to update instance status to RUNNING")
+		}
+	} else {
+		s.log.Error().Err(err).Str("instance_key", missing.InstanceKey).Msg("failed to get instance to set RUNNING")
 	}
 
 	s.log.Info().

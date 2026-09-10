@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/nebula/nebula/internal/registry"
 	"github.com/rs/zerolog"
 )
 
@@ -28,6 +29,11 @@ func NewOrchestrator(sandbox Sandbox, log zerolog.Logger) *Orchestrator {
 
 // BuildFromSource detects the build plan and builds the image inside an ephemeral sandbox.
 func (o *Orchestrator) BuildFromSource(ctx context.Context, projectID, sourceDir, imageTag string, buildArgs map[string]string) (*BuildResult, error) {
+	// Enforce tenant repository push authorization (§20)
+	if err := registry.AuthorizePush(projectID, imageTag); err != nil {
+		return nil, fmt.Errorf("build rejected: %w", err)
+	}
+
 	plan, err := o.detector.Detect(sourceDir)
 	if err != nil {
 		return nil, fmt.Errorf("detection failed: %w", err)

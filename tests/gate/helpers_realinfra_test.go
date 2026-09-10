@@ -58,7 +58,7 @@ func startPostgres(t *testing.T) (dsn string, pool *pgxpool.Pool) {
 		"-e", "POSTGRES_PASSWORD="+pgPass,
 		"-e", "POSTGRES_DB="+pgDB,
 		"-p", "0:5432", // random host port
-		"-d",           // detached
+		"-d", // detached
 		"postgres:17-alpine",
 		"-c", "log_min_messages=WARNING",
 	)

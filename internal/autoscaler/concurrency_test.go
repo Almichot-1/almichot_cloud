@@ -110,9 +110,16 @@ func TestAutoscaler_ConcurrentManualScaleAndAutoscaler(t *testing.T) {
 			finalDep.InstanceCount, activeCount)
 	}
 
-	// Target count must be either 4 or 6 (the two concurrent target requests)
-	if finalDep.InstanceCount != 4 && finalDep.InstanceCount != 6 {
-		t.Errorf("unexpected final replica count: %d (expected 4 or 6)", finalDep.InstanceCount)
+	// Reachable outcomes under any interleaving (§18): the autoscaler doubles the
+	// replica count when CPU=100 vs target=50 (ratio 2.0), so the outcome depends on
+	// when it evaluates relative to the concurrent manual scale:
+	//   4  = autoscaler evaluated against the initial count of 2, then its scale applied last
+	//   6  = manual scale to 6 applied last
+	//   12 = autoscaler evaluated after the manual scale landed (2x of 6), then applied last
+	// The meaningful invariant is the lost-update check above: the count may differ by
+	// ordering, but must never diverge from the actually-running instances.
+	if finalDep.InstanceCount != 4 && finalDep.InstanceCount != 6 && finalDep.InstanceCount != 12 {
+		t.Errorf("unexpected final replica count: %d (expected one of 4, 6, or 12)", finalDep.InstanceCount)
 	}
 
 	t.Logf("✅ Concurrency test passed: deterministic convergence to %d replicas with zero lost updates", finalDep.InstanceCount)

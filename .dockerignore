@@ -1,0 +1,10 @@
+.git/
+.github/
+bin/
+*.log
+coverage.out
+dist/
+**/node_modules
+dashboard/.next/
+.env
+.env.*

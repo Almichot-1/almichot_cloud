@@ -415,4 +415,3 @@ func TestRollback_PartialFailure_Reporting(t *testing.T) {
 		t.Errorf("expected original deployment status NOT to be ROLLED_BACK when rollback scheduling fails")
 	}
 }
-

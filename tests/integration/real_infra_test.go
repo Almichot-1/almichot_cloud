@@ -979,6 +979,6 @@ func TestRI06_RealGRPCThroughputUnderRealNetwork(t *testing.T) {
 	t.Logf("  - Total Calls:      %d over real TCP sockets", totalCalls)
 	t.Logf("  - Total Duration:   %v", duration)
 	t.Logf("  - Real Throughput:  %.0f calls/sec", throughput)
-	t.Logf("  - Dropped / Failed: 0", )
+	t.Logf("  - Dropped / Failed: 0")
 	t.Logf("=========================================================================")
 }

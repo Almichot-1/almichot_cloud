@@ -246,4 +246,3 @@ func (r *PostgresInstanceRepository) ListAll(ctx context.Context) ([]*deployment
 }
 
 var _ deployments.InstanceRepository = (*PostgresInstanceRepository)(nil)
-

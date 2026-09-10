@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-
 // mockCPClient records heartbeat calls from worker
 type mockCPClient struct {
 	proto.UnimplementedControlPlaneServiceServer
@@ -27,7 +26,6 @@ func (m *mockCPClient) Heartbeat(ctx context.Context, req *proto.HeartbeatReques
 	m.lastTimestamp = req.Timestamp
 	return &proto.HeartbeatResponse{Success: true, RecordedAt: req.Timestamp}, nil
 }
-
 
 // FS-02 & WA-13 (Gate G-14): Docker failure != Worker failure.
 // When container creation/starting crashes with a Docker failure:
@@ -109,4 +107,3 @@ type grpcCPClientDirect struct {
 func (c *grpcCPClientDirect) Heartbeat(ctx context.Context, in *proto.HeartbeatRequest, opts ...grpc.CallOption) (*proto.HeartbeatResponse, error) {
 	return c.mockCP.Heartbeat(ctx, in)
 }
-

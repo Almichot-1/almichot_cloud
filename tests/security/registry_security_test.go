@@ -81,10 +81,10 @@ func TestRegistrySecurity_SigningCredentialsNotExposedToBuild(t *testing.T) {
 	// Inject hypothetical signing key env vars into input environment
 	rawEnv := map[string]string{
 		"NEBULA_SIGNING_PRIVATE_KEY": "ed25519-cluster-root-secret-key",
-		"SIGNING_KEY_PATH":          "/etc/nebula/signing.key",
-		"CLUSTER_PRIVATE_KEY":       "secret-cluster-data",
-		"APP_NAME":                  "my-web-app",
-		"PORT":                      "8080",
+		"SIGNING_KEY_PATH":           "/etc/nebula/signing.key",
+		"CLUSTER_PRIVATE_KEY":        "secret-cluster-data",
+		"APP_NAME":                   "my-web-app",
+		"PORT":                       "8080",
 	}
 
 	// Sanitize build environment

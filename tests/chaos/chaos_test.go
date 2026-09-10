@@ -3,8 +3,8 @@ package chaos
 import (
 	"context"
 	"fmt"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 

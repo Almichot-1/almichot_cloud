@@ -136,15 +136,15 @@ func TestSE05_G25_BuildContainerHasNoCPSecretsOrGRPC(t *testing.T) {
 
 	// Comprehensive list of sensitive CP infrastructure secrets and endpoints
 	sensitiveInputs := map[string]string{
-		"NEBULA_DB_PASSWORD":  "super-secret-postgres-root-pass",
-		"NEBULA_DB_USER":      "postgres-admin",
-		"DATABASE_URL":        "postgres://nebula:secretpass@127.0.0.1:5432/nebula",
-		"NEBULA_SECRETS_KEY":  "32-byte-aes-master-key-must-not-leak",
-		"ADMIN_API_TOKEN":     "admin-bearer-token-val",
-		"CONTROL_PLANE_GRPC":  "127.0.0.1:9090",
+		"NEBULA_DB_PASSWORD":   "super-secret-postgres-root-pass",
+		"NEBULA_DB_USER":       "postgres-admin",
+		"DATABASE_URL":         "postgres://nebula:secretpass@127.0.0.1:5432/nebula",
+		"NEBULA_SECRETS_KEY":   "32-byte-aes-master-key-must-not-leak",
+		"ADMIN_API_TOKEN":      "admin-bearer-token-val",
+		"CONTROL_PLANE_GRPC":   "127.0.0.1:9090",
 		"CP_INTERNAL_ENDPOINT": "http://control-plane.nebula.internal:9090",
-		"CUSTOM_APP_SECRET":   "my-api-key-998877",
-		"NORMAL_PUBLIC_ENV":   "production-app-safe",
+		"CUSTOM_APP_SECRET":    "my-api-key-998877",
+		"NORMAL_PUBLIC_ENV":    "production-app-safe",
 	}
 
 	// 1. Audit SanitizeEnvironment: strictly excludes all secrets and gRPC routes

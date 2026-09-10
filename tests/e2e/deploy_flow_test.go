@@ -162,8 +162,9 @@ func TestDL01_OW01_HappyPathDeployFlowAndLoadBalancer(t *testing.T) {
 
 // Exit Check: A real repo with a Dockerfile deploys end-to-end and becomes reachable.
 // Pipeline: Repo with Dockerfile → Build Orchestrator (Dockerfile detected) → Ephemeral sandbox (no secrets)
-//           → Container Registry (image + verified sha256 digest) → Scheduler → Worker RunContainer
-//           → Load Balancer registration → Reachable over HTTP (200 OK).
+//
+//	→ Container Registry (image + verified sha256 digest) → Scheduler → Worker RunContainer
+//	→ Load Balancer registration → Reachable over HTTP (200 OK).
 func TestExitCheck_DockerfileDeployEndToEndAndReachable(t *testing.T) {
 	log := zerolog.Nop()
 	workerRepo := workers.NewMemoryWorkerRepository()
@@ -290,4 +291,3 @@ CMD ["./server"]
 
 	t.Logf("Phase 3 Exit Check SUCCESS: A real repo with a Dockerfile deploys end-to-end and becomes reachable! Response: %s", string(body))
 }
-

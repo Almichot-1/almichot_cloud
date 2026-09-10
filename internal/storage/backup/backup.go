@@ -159,7 +159,9 @@ func (m *MemoryBackupManager) CreateBaseBackup(ctx context.Context) (*BaseBackup
 
 	// Snapshot Releases
 	if m.releaseRepo != nil {
-		if lister, ok := m.releaseRepo.(interface{ List(ctx context.Context, projectID string) ([]*deployments.Release, error) }); ok {
+		if lister, ok := m.releaseRepo.(interface {
+			List(ctx context.Context, projectID string) ([]*deployments.Release, error)
+		}); ok {
 			rels, err := lister.List(ctx, "")
 			if err == nil {
 				bytes, _ := json.Marshal(rels)
@@ -176,7 +178,9 @@ func (m *MemoryBackupManager) CreateBaseBackup(ctx context.Context) (*BaseBackup
 
 	// Snapshot Events
 	if m.eventRepo != nil {
-		if lister, ok := m.eventRepo.(interface{ ListAll(ctx context.Context) ([]*deployments.Event, error) }); ok {
+		if lister, ok := m.eventRepo.(interface {
+			ListAll(ctx context.Context) ([]*deployments.Event, error)
+		}); ok {
 			evts, err := lister.ListAll(ctx)
 			if err == nil {
 				bytes, _ := json.Marshal(evts)
@@ -233,7 +237,9 @@ func (m *MemoryBackupManager) Restore(ctx context.Context, backup *BaseBackup, t
 		Msg("initiating database restore from base backup")
 
 	wipeRepo := func(r any) {
-		if w, ok := r.(interface{ Wipe(ctx context.Context) error }); ok {
+		if w, ok := r.(interface {
+			Wipe(ctx context.Context) error
+		}); ok {
 			_ = w.Wipe(ctx)
 		}
 	}

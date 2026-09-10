@@ -168,4 +168,3 @@ func TestGarbageCollection_PurgeUnreferenced(t *testing.T) {
 		t.Fatalf("expected ErrImageNotFound for purged image, got: %v", err)
 	}
 }
-

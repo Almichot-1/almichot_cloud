@@ -230,9 +230,9 @@ func TestSC06_09_FullPriorityOrderEnforced(t *testing.T) {
 	// c4 has 1 instance of targetDep; c5 and c6 have 0 instances of targetDep.
 	countsProvider := func(ctx context.Context, deploymentID string) (map[string]int, error) {
 		return map[string]int{
-			"c4-has-instance":        1,
-			"c5-higher-util":         0,
-			"c6-winner-lowest-util":  0,
+			"c4-has-instance":       1,
+			"c5-higher-util":        0,
+			"c6-winner-lowest-util": 0,
 		}, nil
 	}
 

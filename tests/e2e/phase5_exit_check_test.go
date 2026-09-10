@@ -226,7 +226,7 @@ func TestPhase5_ExitCheck_WorkerDeathAndNetworkPartition(t *testing.T) {
 	// Step 2.4: When partition heals, Worker B rejoins cleanly without false-healthy or duplicate scheduling
 	_, _ = reg.SetPartitioned(ctx, wB.WorkerKey, false)
 	healTime := deathTime.Add(1 * time.Second)
-	_ = reg.HeartbeatAt(ctx, wB.WorkerKey, healTime)                      // beat 1
+	_ = reg.HeartbeatAt(ctx, wB.WorkerKey, healTime)                           // beat 1
 	_ = reg.HeartbeatAt(ctx, wB.WorkerKey, healTime.Add(100*time.Millisecond)) // beat 2 -> restores HEALTHY via hysteresis
 
 	wBHealed, _ := reg.Get(wB.WorkerKey)

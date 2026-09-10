@@ -28,14 +28,14 @@ func (s DeploymentStatus) IsInFlight() bool {
 
 // Deployment represents a requested application release.
 type Deployment struct {
-	ID            string            `json:"id"`
-	ProjectID     string            `json:"project_id"`
-	Revision      string            `json:"revision"`
-	Image         string            `json:"image"`
-	ImageDigest   string            `json:"image_digest"`
-	DesiredState  string            `json:"desired_state"`
-	Status        DeploymentStatus  `json:"status"`
-	Stage         string            `json:"stage"`
+	ID              string            `json:"id"`
+	ProjectID       string            `json:"project_id"`
+	Revision        string            `json:"revision"`
+	Image           string            `json:"image"`
+	ImageDigest     string            `json:"image_digest"`
+	DesiredState    string            `json:"desired_state"`
+	Status          DeploymentStatus  `json:"status"`
+	Stage           string            `json:"stage"`
 	InstanceCount   int               `json:"instance_count"`
 	DesiredReplicas int               `json:"desired_replicas"`
 	Env             map[string]string `json:"env"`

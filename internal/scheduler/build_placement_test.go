@@ -9,9 +9,9 @@ import (
 )
 
 // TestBuildPlacement_MutualExclusion verifies that:
-// 1. Build jobs route ONLY to build-tagged workers (capability=build) and never to runtime workers.
-// 2. Runtime workloads route ONLY to runtime workers and never to build-tagged workers,
-//    even when build-tagged workers have excess available capacity.
+//  1. Build jobs route ONLY to build-tagged workers (capability=build) and never to runtime workers.
+//  2. Runtime workloads route ONLY to runtime workers and never to build-tagged workers,
+//     even when build-tagged workers have excess available capacity.
 func TestBuildPlacement_MutualExclusion(t *testing.T) {
 	ctx := context.Background()
 	log := zerolog.Nop()

@@ -21,17 +21,17 @@ import (
 )
 
 type haClusterNode struct {
-	id          string
-	depRepo     deployments.DeploymentRepository
-	instRepo    deployments.InstanceRepository
-	workerRepo  workers.WorkerRepository
-	reg         *workers.Registry
-	sched       *scheduler.Scheduler
-	depService  *deployments.Service
-	reconciler  *reconcile.Reconciler
-	elector     *ha.Elector
-	reconciled  atomic.Bool
-	promotedAt  time.Time
+	id         string
+	depRepo    deployments.DeploymentRepository
+	instRepo   deployments.InstanceRepository
+	workerRepo workers.WorkerRepository
+	reg        *workers.Registry
+	sched      *scheduler.Scheduler
+	depService *deployments.Service
+	reconciler *reconcile.Reconciler
+	elector    *ha.Elector
+	reconciled atomic.Bool
+	promotedAt time.Time
 }
 
 func newHAClusterNode(t *testing.T, id string, lockProvider ha.AdvisoryLockProvider, sharedWorkerRepo workers.WorkerRepository, sharedDepRepo deployments.DeploymentRepository, sharedInstRepo deployments.InstanceRepository) *haClusterNode {

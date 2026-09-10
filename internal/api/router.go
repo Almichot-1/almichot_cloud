@@ -17,15 +17,15 @@ import (
 
 // Server holds the dependencies of the HTTP control plane API.
 type Server struct {
-	log         zerolog.Logger
-	svc         *deployments.Service
-	projects    projects.ProjectRepository
-	registry    *workers.Registry
-	router      *loadbalancer.Router
-	idempotency *IdempotencyStore
-	auth         auth.Authenticator
-	secretStore  secrets.SecretStore
-	redactor     *secrets.Redactor
+	log             zerolog.Logger
+	svc             *deployments.Service
+	projects        projects.ProjectRepository
+	registry        *workers.Registry
+	router          *loadbalancer.Router
+	idempotency     *IdempotencyStore
+	auth            auth.Authenticator
+	secretStore     secrets.SecretStore
+	redactor        *secrets.Redactor
 	autoscaler      *autoscaler.Autoscaler
 	enforceHTTPS    bool
 	metricsRegistry *observability.Registry

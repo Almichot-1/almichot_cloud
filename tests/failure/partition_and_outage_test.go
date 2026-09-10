@@ -15,9 +15,9 @@ import (
 )
 
 // FS-05 (Gate G-13) & FS-06:
-// - FS-05: Network partition != worker death. CP<->Worker blackhole marks worker UNREACHABLE;
-//   other workers are completely unaffected; no false-healthy.
-// - FS-06: Partition heals; worker rejoins cleanly and state reconciles without duplicate scheduling.
+//   - FS-05: Network partition != worker death. CP<->Worker blackhole marks worker UNREACHABLE;
+//     other workers are completely unaffected; no false-healthy.
+//   - FS-06: Partition heals; worker rejoins cleanly and state reconciles without duplicate scheduling.
 func TestFS05_G13_FS06_NetworkPartitionAndCleanHeal(t *testing.T) {
 	log := zerolog.Nop()
 	ctx := context.Background()

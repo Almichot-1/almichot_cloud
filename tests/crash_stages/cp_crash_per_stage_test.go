@@ -317,8 +317,6 @@ func TestCPCrash04_G19_CrashWhileStarting_PartialContainersCleanedUp(t *testing.
 		Capacity:  10,
 	})
 
-
-
 	// Inject a partial running container on worker 1 to simulate a container launched just before the crash
 	depID := "dep-partial-crash"
 	instKey := "inst-partial-0"

@@ -45,7 +45,6 @@ type Worker struct {
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
-
 // AvailableCapacity returns how many additional workloads this worker can accept.
 func (w *Worker) AvailableCapacity() int {
 	available := w.Capacity - w.ActiveWorkloads

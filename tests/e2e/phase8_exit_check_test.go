@@ -134,13 +134,13 @@ func TestPhase8_ExitCheck(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte("FROM alpine:latest\nCMD [\"echo\", \"hello\"]"), 0644)
 
 	sensitiveCPConfig := map[string]string{
-		"NEBULA_DB_PASSWORD":  "super-secret-postgres-root-pass",
-		"DATABASE_URL":        "postgres://nebula:secretpass@127.0.0.1:5432/nebula",
-		"NEBULA_SECRETS_KEY":  "32-byte-aes-master-key-must-not-leak",
-		"ADMIN_API_TOKEN":     "admin-bearer-token-val",
-		"CONTROL_PLANE_GRPC":  "127.0.0.1:9090",
+		"NEBULA_DB_PASSWORD":   "super-secret-postgres-root-pass",
+		"DATABASE_URL":         "postgres://nebula:secretpass@127.0.0.1:5432/nebula",
+		"NEBULA_SECRETS_KEY":   "32-byte-aes-master-key-must-not-leak",
+		"ADMIN_API_TOKEN":      "admin-bearer-token-val",
+		"CONTROL_PLANE_GRPC":   "127.0.0.1:9090",
 		"CP_INTERNAL_ENDPOINT": "http://control-plane.nebula.internal:9090",
-		"PUBLIC_ENV":          "production-ready",
+		"PUBLIC_ENV":           "production-ready",
 	}
 
 	buildPlan := &build.BuildPlan{

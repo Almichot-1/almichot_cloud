@@ -21,8 +21,8 @@ import (
 )
 
 type authTestStack struct {
-	srv        *httptest.Server
-	tokenStore *auth.TokenStore
+	srv         *httptest.Server
+	tokenStore  *auth.TokenStore
 	projectRepo projects.ProjectRepository
 }
 

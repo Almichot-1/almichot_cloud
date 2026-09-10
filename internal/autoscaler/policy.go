@@ -24,14 +24,14 @@ const (
 
 // ScalingPolicy configures the autoscaler behavior for an application/project (§18).
 type ScalingPolicy struct {
-	ProjectID          string        `json:"project_id"`
-	MetricType         MetricType    `json:"metric_type"`
-	TargetValue        float64       `json:"target_value"`               // e.g. 70.0 for 70% CPU, 100.0 for 100 RPS
-	Tolerance          float64       `json:"tolerance"`                  // deadband tolerance (default 0.10 for 10%)
-	MinReplicas        int           `json:"min_replicas"`               // minimum replica floor (never scale below this)
-	MaxReplicas        int           `json:"max_replicas"`               // maximum replica ceiling
-	ScaleUpCooldown    time.Duration `json:"scale_up_cooldown"`          // cooldown window after scale-up
-	ScaleDownCooldown  time.Duration `json:"scale_down_cooldown"`        // cooldown window after scale-down
+	ProjectID         string        `json:"project_id"`
+	MetricType        MetricType    `json:"metric_type"`
+	TargetValue       float64       `json:"target_value"`        // e.g. 70.0 for 70% CPU, 100.0 for 100 RPS
+	Tolerance         float64       `json:"tolerance"`           // deadband tolerance (default 0.10 for 10%)
+	MinReplicas       int           `json:"min_replicas"`        // minimum replica floor (never scale below this)
+	MaxReplicas       int           `json:"max_replicas"`        // maximum replica ceiling
+	ScaleUpCooldown   time.Duration `json:"scale_up_cooldown"`   // cooldown window after scale-up
+	ScaleDownCooldown time.Duration `json:"scale_down_cooldown"` // cooldown window after scale-down
 }
 
 // DefaultPolicy returns a reasonable default scaling policy for an application.

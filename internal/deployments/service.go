@@ -82,7 +82,7 @@ type MockWorkerClientFactory struct {
 	mu           sync.Mutex
 	Dispatched   []*proto.RunContainerRequest
 	Stopped      []*proto.StopContainerRequest
-	TargetWorker map[string]string // InstanceKey -> WorkerKey
+	TargetWorker map[string]string                 // InstanceKey -> WorkerKey
 	Containers   map[string][]*proto.ContainerInfo // WorkerID or WorkerKey -> list of containers
 	FailRun      error
 	FailStop     error
@@ -238,7 +238,6 @@ func (c *mockClient) ListContainers(ctx context.Context, req *proto.ListContaine
 		Containers: res,
 	}, nil
 }
-
 
 // PortSpec describes a host-to-container port mapping for a deployed instance.
 type PortSpec struct {

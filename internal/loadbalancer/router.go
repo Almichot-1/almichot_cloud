@@ -21,12 +21,12 @@ type Target struct {
 
 // Router acts as an HTTP reverse proxy / load balancer for deployed instances (OW-01, Phase 15).
 type Router struct {
-	mu           sync.RWMutex
-	targets      map[string][]*Target // keyed by project_id
-	hostnames    map[string]string    // hostname -> project_id (e.g. myapp.nebula.example -> proj-1)
-	cpCallbacks  uint64               // invariant assertion counter: should remain 0 during proxying
-	counter      uint64
-	log          zerolog.Logger
+	mu          sync.RWMutex
+	targets     map[string][]*Target // keyed by project_id
+	hostnames   map[string]string    // hostname -> project_id (e.g. myapp.nebula.example -> proj-1)
+	cpCallbacks uint64               // invariant assertion counter: should remain 0 during proxying
+	counter     uint64
+	log         zerolog.Logger
 }
 
 // NewRouter creates a new load balancer Router.

@@ -109,10 +109,7 @@ func InitTracer(serviceName string) trace.Tracer {
 }
 
 func getTracer() trace.Tracer {
-	if tracer == nil {
-		return InitTracer("nebula-control-plane")
-	}
-	return tracer
+	return InitTracer("nebula-control-plane")
 }
 
 // StartSpan creates a new OpenTelemetry span and records it into GlobalSpanRecorder.

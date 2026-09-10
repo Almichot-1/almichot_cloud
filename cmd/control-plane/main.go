@@ -121,7 +121,6 @@ func main() {
 
 	cpService := grpcapi.NewControlPlaneServiceServer(workerRegistry, depService, log)
 
-
 	server, err := grpcapi.NewServer(cfg.GRPC.ListenAddr, log, func(s *grpc.Server) {
 		proto.RegisterControlPlaneServiceServer(s, cpService)
 	})

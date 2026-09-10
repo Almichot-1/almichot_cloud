@@ -385,4 +385,3 @@ func (r *MemoryReleaseRepository) Wipe(ctx context.Context) error {
 	r.releases = make(map[string]*Release)
 	return nil
 }
-

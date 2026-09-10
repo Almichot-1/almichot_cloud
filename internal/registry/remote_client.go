@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -128,6 +129,30 @@ func (c *RemoteRegistryClient) Push(ctx context.Context, tag string, data []byte
 			c.log.Info().Str("tag", targetTag).Str("digest", actualDigest).Msg("successfully pushed image to remote registry")
 		} else {
 			c.log.Warn().Err(err).Str("target_tag", targetTag).Msg("daemon push returned error; recording in fallback cache")
+		}
+	} else if c.cfg.RegistryHost != "" {
+		// HTTP OCI Distribution v2 manifest upload
+		repo, reference := parseTag(tag)
+		reqURL := fmt.Sprintf("%s/%s/manifests/%s", c.baseURL(), repo, reference)
+		putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(data))
+		if err != nil {
+			return "", fmt.Errorf("create manifest upload request: %w", err)
+		}
+		putReq.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+		if c.cfg.Username != "" && c.cfg.Password != "" {
+			putReq.SetBasicAuth(c.cfg.Username, c.cfg.Password)
+		}
+		putResp, err := c.httpClient.Do(putReq)
+		if err != nil {
+			return "", fmt.Errorf("upload manifest to %s: %w", reqURL, err)
+		}
+		defer putResp.Body.Close()
+		if putResp.StatusCode >= 400 {
+			body, _ := io.ReadAll(putResp.Body)
+			return "", fmt.Errorf("upload manifest failed (HTTP %d): %s", putResp.StatusCode, string(body))
+		}
+		if d := putResp.Header.Get("Docker-Content-Digest"); d != "" {
+			actualDigest = d
 		}
 	}
 

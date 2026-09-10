@@ -44,12 +44,12 @@ type ProjectResponse struct {
 
 // DeploymentCreateRequest is the body for triggering a deployment.
 type DeploymentCreateRequest struct {
-	Image         string            `json:"image"`
-	SourcePath    string            `json:"source_path"`
-	Revision      string            `json:"revision"`
-	InstanceCount int               `json:"instance_count"`
-	Env           map[string]string `json:"env"`
-	Labels        map[string]string `json:"labels"`
+	Image         string                 `json:"image"`
+	SourcePath    string                 `json:"source_path"`
+	Revision      string                 `json:"revision"`
+	InstanceCount int                    `json:"instance_count"`
+	Env           map[string]string      `json:"env"`
+	Labels        map[string]string      `json:"labels"`
 	Ports         []deployments.PortSpec `json:"ports"`
 }
 

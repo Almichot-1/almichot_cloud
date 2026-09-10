@@ -27,11 +27,11 @@ import (
 // 1. Deploy v17: traffic routed to v17 backend.
 // 2. Deploy v18: traffic updated to v18 backend.
 // 3. POST /v1/deployments/{v18_id}/rollback:
-//    - Automatically identifies v17 as previous known-good release.
-//    - Restores and schedules v17 by its immutable digest (Gate G-30).
-//    - Restores traffic within SLA with zero manual intervention (Gate G-29).
-//    - Disables old v18 routing targets and marks v18 as ROLLED_BACK.
-//    - Produces DEPLOYMENT_ROLLED_BACK event queried via HTTP API.
+//   - Automatically identifies v17 as previous known-good release.
+//   - Restores and schedules v17 by its immutable digest (Gate G-30).
+//   - Restores traffic within SLA with zero manual intervention (Gate G-29).
+//   - Disables old v18 routing targets and marks v18 as ROLLED_BACK.
+//   - Produces DEPLOYMENT_ROLLED_BACK event queried via HTTP API.
 func TestE2E_FullRollbackFlowTrafficAndZeroIntervention(t *testing.T) {
 	ctx := context.Background()
 	log := zerolog.Nop()

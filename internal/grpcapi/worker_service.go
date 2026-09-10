@@ -232,7 +232,6 @@ func (s *WorkerServiceServer) ListContainers(ctx context.Context, req *proto.Lis
 	}, nil
 }
 
-
 // Register acknowledges worker registration (no CP-side registry yet, just accept the call).
 func (s *WorkerServiceServer) Register(ctx context.Context, req *proto.RegisterRequest) (*proto.RegisterResponse, error) {
 	s.log.Info().

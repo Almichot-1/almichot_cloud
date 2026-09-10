@@ -45,7 +45,6 @@ func NewRegistry(repo WorkerRepository, log zerolog.Logger) *Registry {
 		log:       log.With().Str("component", "worker-registry").Logger(),
 	}
 
-
 	// Warm in-memory cache from repository if available
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -215,7 +214,6 @@ func (r *Registry) SetHealth(workerIDOrKey string, health WorkerHealth) {
 	_, _ = r.SetHealthWithReason(context.Background(), workerIDOrKey, health, "explicit update")
 }
 
-
 // SetPartitioned marks a worker as network partitioned / unreachable from Control Plane (G-13, FS-05).
 func (r *Registry) SetPartitioned(ctx context.Context, workerIDOrKey string, partitioned bool) (*Worker, error) {
 	r.mu.Lock()
@@ -245,7 +243,6 @@ func (r *Registry) SetPartitioned(ctx context.Context, workerIDOrKey string, par
 	clone := *w
 	return &clone, nil
 }
-
 
 // Drain marks a worker as DRAINING and sets Schedulable to false (G-07).
 func (r *Registry) Drain(ctx context.Context, workerIDOrKey string) (*Worker, error) {

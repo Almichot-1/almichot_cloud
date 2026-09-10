@@ -34,14 +34,14 @@ func TestSecurity_BuildWorkerFleet_NoCPSecretsLeaked(t *testing.T) {
 
 	// Sensitive Control Plane secrets and internal routing
 	sensitiveSecrets := map[string]string{
-		"NEBULA_DB_PASSWORD":   "ultra-secret-db-pass-1234",
-		"NEBULA_SECRETS_KEY":   "32byte-aes-gcm-master-envelope-key",
-		"DATABASE_URL":         "postgres://admin:pass@db.internal:5432/nebula",
-		"POSTGRES_PASSWORD":    "postgres-root-secret",
-		"API_ADMIN_TOKEN":      "jwt-super-admin-token",
-		"CONTROL_PLANE_ROUTE":  "http://cp.internal:9090",
-		"INTERNAL_GRPC_ADDR":   "127.0.0.1:9090",
-		"PUBLIC_SAFE_CONFIG":   "production-mode",
+		"NEBULA_DB_PASSWORD":  "ultra-secret-db-pass-1234",
+		"NEBULA_SECRETS_KEY":  "32byte-aes-gcm-master-envelope-key",
+		"DATABASE_URL":        "postgres://admin:pass@db.internal:5432/nebula",
+		"POSTGRES_PASSWORD":   "postgres-root-secret",
+		"API_ADMIN_TOKEN":     "jwt-super-admin-token",
+		"CONTROL_PLANE_ROUTE": "http://cp.internal:9090",
+		"INTERNAL_GRPC_ADDR":  "127.0.0.1:9090",
+		"PUBLIC_SAFE_CONFIG":  "production-mode",
 	}
 
 	plan := &build.BuildPlan{

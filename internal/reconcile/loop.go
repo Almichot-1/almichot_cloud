@@ -60,7 +60,6 @@ type Reconciler struct {
 	stopCh chan struct{}
 }
 
-
 // NewReconciler creates a new Reconciler.
 func NewReconciler(
 	registry *workers.Registry,

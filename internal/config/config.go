@@ -60,9 +60,9 @@ type HTTPConfig struct {
 }
 
 type WorkerConfig struct {
-	ID             string
-	HeartbeatInt   time.Duration
-	ListenAddr     string
+	ID           string
+	HeartbeatInt time.Duration
+	ListenAddr   string
 }
 
 // ReconcileConfig tunes the reconciliation control loop (RCN-01, RCN-02).
@@ -98,9 +98,9 @@ func Load() Config {
 			ListenAddr: getEnv("NEBULA_HTTP_ADDR", ":8081"),
 		},
 		Worker: WorkerConfig{
-			ID:             getEnv("NEBULA_WORKER_ID", ""),
-			HeartbeatInt:   getEnvDuration("NEBULA_HEARTBEAT_INTERVAL", 10*time.Second),
-			ListenAddr:     getEnv("NEBULA_WORKER_ADDR", ":9091"),
+			ID:           getEnv("NEBULA_WORKER_ID", ""),
+			HeartbeatInt: getEnvDuration("NEBULA_HEARTBEAT_INTERVAL", 10*time.Second),
+			ListenAddr:   getEnv("NEBULA_WORKER_ADDR", ":9091"),
 		},
 		Reconcile: ReconcileConfig{
 			Interval: getEnvDuration("NEBULA_RECONCILE_INTERVAL", 5*time.Second),

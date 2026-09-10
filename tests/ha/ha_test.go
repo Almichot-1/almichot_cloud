@@ -353,9 +353,21 @@ func TestHA_RepeatedMidReconciliationFailover(t *testing.T) {
 	cp2 := newHAClusterNode(t, "cp-2", lockProvider, sharedWorkerRepo, sharedDepRepo, sharedInstRepo)
 
 	cp1.elector.Start(ctx)
-	cp2.elector.Start(ctx)
 
-	time.Sleep(50 * time.Millisecond)
+	// cp-1 must win leadership uncontested before cp-2 joins (mirrors G-43/G-44 setup)
+	deadlineLeader := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadlineLeader) {
+		if cp1.elector.IsLeader() {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !cp1.elector.IsLeader() {
+		t.Fatal("Expected cp-1 to be active leader before mid-reconciliation failover")
+	}
+
+	cp2.elector.Start(ctx)
+	time.Sleep(20 * time.Millisecond)
 
 	// Create deployment
 	_, _, err := cp1.depService.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{

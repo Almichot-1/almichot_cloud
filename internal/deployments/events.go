@@ -87,3 +87,24 @@ func (r *MemoryEventRepository) ListByDeployment(ctx context.Context, deployment
 	}
 	return res, nil
 }
+
+// ListAll returns all recorded events.
+func (r *MemoryEventRepository) ListAll(ctx context.Context) ([]*Event, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var res []*Event
+	for _, ev := range r.events {
+		clone := *ev
+		res = append(res, &clone)
+	}
+	return res, nil
+}
+
+// Wipe clears all events from memory (used in disaster recovery and restore).
+func (r *MemoryEventRepository) Wipe(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = make([]*Event, 0)
+	return nil
+}

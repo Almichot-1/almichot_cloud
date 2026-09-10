@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,6 +98,31 @@ func RequireHTTPS(enforce bool) func(http.Handler) http.Handler {
 				}
 			}
 
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// HeaderClientVersion is the header sent by CLI clients (§31).
+const HeaderClientVersion = "X-Nebula-Client-Version"
+
+// ClientVersionCheck verifies CLI client backward compatibility (§31).
+func ClientVersionCheck(minSupportedMajor int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			v := r.Header.Get(HeaderClientVersion)
+			if v != "" {
+				clean := strings.TrimPrefix(v, "v")
+				parts := strings.Split(clean, ".")
+				if len(parts) > 0 {
+					var major int
+					_, err := fmt.Sscanf(parts[0], "%d", &major)
+					if err == nil && major < minSupportedMajor {
+						writeErr(w, http.StatusUpgradeRequired, fmt.Sprintf("client version mismatch: %s is deprecated, please upgrade nebula-cli to >= v%d.0.0", v, minSupportedMajor))
+						return
+					}
+				}
+			}
 			next.ServeHTTP(w, r)
 		})
 	}

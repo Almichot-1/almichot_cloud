@@ -17,6 +17,8 @@ type Project struct {
 	Name            string    `json:"name"`
 	Description     string    `json:"description"`
 	RepoURL         string    `json:"repo_url"`
+	DefaultBranch   string    `json:"default_branch,omitempty"`
+	RootDir         string    `json:"root_dir,omitempty"`
 	WebhookSecret   string    `json:"webhook_secret,omitempty"`
 	DesiredReplicas int       `json:"desired_replicas"`
 	MinReplicas     int       `json:"min_replicas"`
@@ -140,4 +142,13 @@ func (r *MemoryProjectRepository) List(ctx context.Context) ([]*Project, error) 
 		res = append(res, &clone)
 	}
 	return res, nil
+}
+
+// Wipe clears all projects from memory (used in disaster recovery and restore).
+func (r *MemoryProjectRepository) Wipe(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.projects = make(map[string]*Project)
+	r.byName = make(map[string]*Project)
+	return nil
 }

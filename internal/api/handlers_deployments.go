@@ -51,9 +51,14 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, err := s.projects.GetByID(r.Context(), projectID); err != nil {
-		respond(http.StatusNotFound, ErrorResponse{Error: err.Error()})
-		return
+	p, err := s.projects.GetByID(r.Context(), projectID)
+	if err != nil {
+		p, err = s.projects.GetByName(r.Context(), projectID)
+		if err != nil {
+			respond(http.StatusNotFound, ErrorResponse{Error: "project not found"})
+			return
+		}
+		projectID = p.ID
 	}
 
 	var req DeploymentCreateRequest
@@ -123,6 +128,12 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("projectID")
+	if p, err := s.projects.GetByID(r.Context(), projectID); err == nil {
+		projectID = p.ID
+	} else if p, err := s.projects.GetByName(r.Context(), projectID); err == nil {
+		projectID = p.ID
+	}
+
 	if s.auth != nil {
 		user := auth.UserFromContext(r.Context())
 		if user != nil && !user.HasProjectAccess(projectID) {

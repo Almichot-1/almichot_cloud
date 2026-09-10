@@ -141,9 +141,11 @@ func NewRouter(s *Server) http.Handler {
 	mux.HandleFunc("GET /v1/projects/{projectID}/autoscaler/policy", s.getAutoscalerPolicy)
 	mux.HandleFunc("POST /v1/projects/{projectID}/autoscaler/evaluate", s.evaluateAutoscaler)
 
-	// Events (§19.1, §22, §27.2)
+	// Events & Logs (§19.1, §22, §27.2, Phase 17)
 	mux.HandleFunc("GET /v1/projects/{projectID}/events", s.listProjectEvents)
 	mux.HandleFunc("GET /v1/deployments/{id}/events", s.listDeploymentEvents)
+	mux.HandleFunc("GET /v1/projects/{projectID}/logs", s.listProjectLogs)
+	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.listDeploymentLogs)
 
 	// Webhooks (HMAC-SHA256 signature verified)
 	mux.HandleFunc("POST /v1/projects/{projectID}/webhooks", s.handleProjectWebhook)
@@ -202,6 +204,7 @@ func NewRouter(s *Server) http.Handler {
 		handler = s.rateLimiter.Middleware(handler)
 	}
 
+	handler = ClientVersionCheck(1)(handler)
 	handler = requestLogger(s.log)(handler)
 	handler = requestID(handler)
 	handler = recoverer(handler)

@@ -24,6 +24,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Name:          req.Name,
 		Description:   req.Description,
 		RepoURL:       req.RepoURL,
+		DefaultBranch: req.DefaultBranch,
+		RootDir:       req.RootDir,
 		WebhookSecret: req.WebhookSecret,
 	}
 	if err := s.projects.Create(r.Context(), p); err != nil {
@@ -63,10 +65,14 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
-	p, err := s.projects.GetByID(r.Context(), r.PathValue("id"))
+	idOrName := r.PathValue("id")
+	p, err := s.projects.GetByID(r.Context(), idOrName)
 	if err != nil {
-		notFound(w, err)
-		return
+		p, err = s.projects.GetByName(r.Context(), idOrName)
+		if err != nil {
+			notFound(w, err)
+			return
+		}
 	}
 
 	if s.auth != nil {

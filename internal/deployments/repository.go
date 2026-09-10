@@ -134,6 +134,14 @@ func (r *MemoryDeploymentRepository) List(ctx context.Context, projectID string)
 	return res, nil
 }
 
+// Wipe clears all deployments from memory (used in disaster recovery and restore).
+func (r *MemoryDeploymentRepository) Wipe(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deployments = make(map[string]*Deployment)
+	return nil
+}
+
 // MemoryInstanceRepository is an in-memory implementation of InstanceRepository.
 type MemoryInstanceRepository struct {
 	mu        sync.RWMutex
@@ -259,6 +267,15 @@ func (r *MemoryInstanceRepository) ListAll(ctx context.Context) ([]*Instance, er
 	return res, nil
 }
 
+// Wipe clears all instances from memory (used in disaster recovery and restore).
+func (r *MemoryInstanceRepository) Wipe(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.instances = make(map[string]*Instance)
+	r.byKey = make(map[string]*Instance)
+	return nil
+}
+
 // Release represents an immutable deployment release artifact (§10.1, §19.1, §21.3).
 type Release struct {
 	ID           string    `json:"id"`
@@ -344,5 +361,28 @@ func (r *MemoryReleaseRepository) ListByProject(ctx context.Context, projectID s
 		}
 	}
 	return result, nil
+}
+
+// List returns all releases across all projects if projectID is empty.
+func (r *MemoryReleaseRepository) List(ctx context.Context, projectID string) ([]*Release, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []*Release
+	for _, rel := range r.releases {
+		if projectID == "" || rel.ProjectID == projectID {
+			clone := *rel
+			result = append(result, &clone)
+		}
+	}
+	return result, nil
+}
+
+// Wipe clears all releases from memory (used in disaster recovery and restore).
+func (r *MemoryReleaseRepository) Wipe(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.releases = make(map[string]*Release)
+	return nil
 }
 

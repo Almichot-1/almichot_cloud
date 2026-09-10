@@ -22,6 +22,8 @@ type ProjectCreateRequest struct {
 	Name          string `json:"name"`
 	Description   string `json:"description"`
 	RepoURL       string `json:"repo_url"`
+	DefaultBranch string `json:"default_branch,omitempty"`
+	RootDir       string `json:"root_dir,omitempty"`
 	WebhookSecret string `json:"webhook_secret,omitempty"`
 }
 
@@ -31,6 +33,8 @@ type ProjectResponse struct {
 	Name            string `json:"name"`
 	Description     string `json:"description"`
 	RepoURL         string `json:"repo_url"`
+	DefaultBranch   string `json:"default_branch,omitempty"`
+	RootDir         string `json:"root_dir,omitempty"`
 	DesiredReplicas int    `json:"desired_replicas,omitempty"`
 	MinReplicas     int    `json:"min_replicas,omitempty"`
 	MaxReplicas     int    `json:"max_replicas,omitempty"`
@@ -99,6 +103,8 @@ func newProjectResponse(p *projects.Project) ProjectResponse {
 		Name:            p.Name,
 		Description:     p.Description,
 		RepoURL:         p.RepoURL,
+		DefaultBranch:   p.DefaultBranch,
+		RootDir:         p.RootDir,
 		DesiredReplicas: p.DesiredReplicas,
 		MinReplicas:     p.MinReplicas,
 		MaxReplicas:     p.MaxReplicas,

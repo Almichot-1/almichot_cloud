@@ -95,3 +95,14 @@ export interface EventsResponse {
   next_cursor: number;
   total: number;
 }
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  repo_url?: string;
+  default_branch?: string;
+  root_dir?: string;
+  desired_replicas?: number;
+  created_at?: string;
+}

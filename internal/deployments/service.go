@@ -447,6 +447,15 @@ func (s *Service) CreateAndDeploy(ctx context.Context, params CreateDeploymentPa
 		return nil, nil, fmt.Errorf("failed to create deployment record: %w", err)
 	}
 
+	if s.eventRepo != nil {
+		_ = s.eventRepo.Create(ctx, &Event{
+			ProjectID:    dep.ProjectID,
+			DeploymentID: dep.ID,
+			EventType:    "DEPLOYMENT_QUEUED",
+			Message:      fmt.Sprintf("Deployment queued for project %s with %d desired replicas", dep.ProjectID, dep.InstanceCount),
+		})
+	}
+
 	// Snapshot project secrets for this deployment (SEC-01..04)
 	if s.secretStore != nil && params.ProjectID != "" {
 		if err := s.secretStore.SnapshotForDeployment(ctx, params.ProjectID, depID); err != nil {
@@ -844,6 +853,15 @@ func (s *Service) scheduleAndDispatchInstances(
 	dep.Stage = "RUNNING"
 	if err := s.depRepo.UpdateStatus(ctx, depID, StatusRunning, "RUNNING"); err != nil {
 		s.log.Error().Err(err).Str("deployment_id", depID).Msg("failed to update deployment status to RUNNING")
+	}
+
+	if s.eventRepo != nil {
+		_ = s.eventRepo.Create(ctx, &Event{
+			ProjectID:    dep.ProjectID,
+			DeploymentID: depID,
+			EventType:    "DEPLOYMENT_RUNNING",
+			Message:      fmt.Sprintf("Deployment %s converged to RUNNING with %d instances", depID[:8], len(createdInstances)),
+		})
 	}
 
 	observability.MetricDeploymentStatusTotal.Inc(map[string]string{

@@ -3,8 +3,8 @@ import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "Nebula — Read-Only Ops Dashboard",
-  description: "High-dependability read-only ops monitoring dashboard for Nebula compute cluster",
+  title: "Nebula — Control Plane Ops & Deployment Dashboard",
+  description: "High-dependability ops and write-capable deployment dashboard for Nebula compute cluster",
 };
 
 export default function RootLayout({

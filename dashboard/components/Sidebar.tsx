@@ -220,7 +220,7 @@ export function Sidebar() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <Shield size={12} color="var(--trust-blue-light)" />
-            <strong style={{ color: "rgba(255, 255, 255, 0.9)" }}>READ-ONLY</strong>
+            <strong style={{ color: "rgba(255, 255, 255, 0.9)" }}>WRITE-CAPABLE</strong>
           </span>
           <span
             style={{

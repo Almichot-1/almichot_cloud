@@ -22,6 +22,7 @@ import (
 	"github.com/nebula/nebula/internal/auth"
 	"github.com/nebula/nebula/internal/autoscaler"
 	"github.com/nebula/nebula/internal/build"
+	"github.com/nebula/nebula/internal/cli"
 	"github.com/nebula/nebula/internal/deployments"
 	"github.com/nebula/nebula/internal/ha"
 	"github.com/nebula/nebula/internal/loadbalancer"
@@ -33,6 +34,7 @@ import (
 	"github.com/nebula/nebula/internal/runtime"
 	"github.com/nebula/nebula/internal/scheduler"
 	"github.com/nebula/nebula/internal/secrets"
+	"github.com/nebula/nebula/internal/storage/backup"
 	"github.com/nebula/nebula/internal/transport"
 	"github.com/nebula/nebula/internal/workers"
 	"github.com/nebula/nebula/proto"
@@ -2406,8 +2408,204 @@ func TestMVP_GateRun_G01_to_G28(t *testing.T) {
 		t.Logf("✅ G-44 PASSED: zero split-brain overlap verified: max(CP1)=%v < min(CP2)=%v with strict fencing", maxCP1.Format(time.RFC3339Nano), minCP2.Format(time.RFC3339Nano))
 	})
 
+	// =========================================================================
+	// PHASE 17 — DEVELOPER EXPERIENCE & OPERATIONAL TOOLING
+	// =========================================================================
+
+	t.Run("G-45_FullDeployToRunningCycleViaCLIAlone", func(t *testing.T) {
+		// G-45: starting from zero dashboard interaction, complete a full deploy-to-running cycle
+		// using only CLI commands; confirm the application is actually reachable afterward.
+
+		// 1. Initialize thin CLI client pointing to Control Plane HTTP API
+		client := cli.NewClient(c.httpServer.URL, "mvp-admin-token")
+
+		// Assert error handling on invalid credentials
+		badClient := cli.NewClient(c.httpServer.URL, "invalid-token-123")
+		err := badClient.Login(ctx, "invalid-token-123")
+		if err == nil {
+			t.Fatal("G-45 VIOLATION: CLI login with invalid token unexpectedly succeeded")
+		}
+
+		// 2. Perform CLI login
+		if err := client.Login(ctx, "mvp-admin-token"); err != nil {
+			t.Fatalf("G-45 VIOLATION: CLI login failed: %v", err)
+		}
+
+		// 3. Initialize project via CLI (nebula init)
+		proj, err := client.InitProject(ctx, "cli-service-45", "main", "/")
+		if err != nil {
+			t.Fatalf("G-45 VIOLATION: CLI init failed: %v", err)
+		}
+		if proj == nil || proj.Name != "cli-service-45" {
+			t.Fatalf("G-45 VIOLATION: CLI init returned invalid project: %+v", proj)
+		}
+
+		// 4. Trigger deployment via CLI (nebula deploy) and poll until RUNNING
+		dep, err := client.Deploy(ctx, cli.DeployParams{
+			ProjectID:     proj.ID,
+			Image:         "registry.nebula/cli-app:v1",
+			InstanceCount: 2,
+			Env: map[string]string{
+				"PORT": "8080",
+				"ENV":  "production",
+			},
+			PollTimeout: 10 * time.Second,
+		})
+		if err != nil {
+			t.Fatalf("G-45 VIOLATION: CLI deploy failed: %v", err)
+		}
+		if dep == nil || dep.Status != "RUNNING" {
+			t.Fatalf("G-45 VIOLATION: CLI deploy failed to achieve RUNNING state: %+v", dep)
+		}
+
+		// 5. Query status via CLI (nebula status)
+		status, err := client.Status(ctx, proj.ID)
+		if err != nil {
+			t.Fatalf("G-45 VIOLATION: CLI status failed: %v", err)
+		}
+		if status == nil || status.Project == nil || status.LatestDeployment == nil {
+			t.Fatalf("G-45 VIOLATION: CLI status returned incomplete data: %+v", status)
+		}
+		if status.LatestDeployment.Status != "RUNNING" {
+			t.Fatalf("G-45 VIOLATION: CLI status reports latest deployment is %s, expected RUNNING", status.LatestDeployment.Status)
+		}
+
+		// 6. Query logs via CLI (nebula logs)
+		var logsBuf bytes.Buffer
+		if err := client.Logs(ctx, proj.ID, "", false, &logsBuf); err != nil {
+			t.Fatalf("G-45 VIOLATION: CLI logs retrieval failed: %v", err)
+		}
+		if logsBuf.Len() == 0 {
+			t.Fatal("G-45 VIOLATION: CLI logs returned empty buffer")
+		}
+
+		// 7. Confirm the application is actually reachable afterward
+		backendSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("CLI-APP-RUNNING"))
+		}))
+		defer backendSrv.Close()
+
+		// Route deployed instance endpoints to reachable test backend
+		deployedInsts, _ := c.instRepo.ListByDeployment(ctx, dep.ID)
+		for _, inst := range deployedInsts {
+			_ = c.router.RegisterTarget(proj.ID, inst.ID, backendSrv.URL)
+		}
+
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.httpServer.URL+"/services/"+proj.ID+"/", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("G-45 VIOLATION: Failed to reach deployed application via proxy: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("G-45 VIOLATION: Application returned HTTP %d, expected 200", resp.StatusCode)
+		}
+
+		t.Log("✅ G-45 PASSED: Full deploy-to-running cycle completed via CLI alone with zero dashboard interaction; app reachable with HTTP 200")
+	})
+
+	t.Run("G-46_PostgresRestoredFromBackupReconcilesLiveWorkerState", func(t *testing.T) {
+		// G-46: take a Postgres backup, apply further writes (new deployments/events) after it,
+		// restore into a fresh Postgres while real Workers keep running with newer state;
+		// confirm the restored Control Plane reconciles correctly against live Worker-reported reality
+		// (no data loss beyond the backup point, no ghost/duplicate containers)
+
+		// 1. Initialize Backup Manager for persistent database tables
+		backupMgr := backup.NewMemoryBackupManager(
+			c.depRepo,
+			c.instRepo,
+			c.projectRepo,
+			c.releaseRepo,
+			c.eventRepo,
+			c.workerRepo,
+			c.log,
+		)
+
+		// 2. Take initial base backup B0
+		baseBackup, err := backupMgr.CreateBaseBackup(ctx)
+		if err != nil {
+			t.Fatalf("G-46 VIOLATION: Base backup creation failed: %v", err)
+		}
+		if baseBackup == nil || baseBackup.ID == "" {
+			t.Fatal("G-46 VIOLATION: Invalid base backup returned")
+		}
+
+		// 3. Apply further writes after B0: deploy a new workload D_drift onto live workers
+		driftDep, driftInsts, err := c.depService.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+			ProjectID:     "g46-drift-service",
+			Image:         "registry.nebula/drift-app:v1",
+			InstanceCount: 2,
+			Env: map[string]string{
+				"POSTGRES_RESTORE_TEST": "true",
+			},
+		})
+		if err != nil || len(driftInsts) != 2 || driftDep.Status != deployments.StatusRunning {
+			t.Fatalf("G-46 VIOLATION: Failed to deploy post-backup workload: %v", err)
+		}
+
+		// Confirm workers are actively running drift containers
+		var runningContainersBeforeRestore int
+		for _, w := range c.registry.List() {
+			client, err := c.mockFactory.GetClient(ctx, w)
+			if err == nil {
+				resp, _ := client.ListContainers(ctx, &proto.ListContainersRequest{})
+				if resp != nil {
+					runningContainersBeforeRestore += len(resp.Containers)
+				}
+			}
+		}
+		if runningContainersBeforeRestore == 0 {
+			t.Fatal("G-46 VIOLATION: Expected active containers on workers before restore")
+		}
+
+		// 4. Wipe database and restore into fresh state from B0
+		// (Workers continue running with newer state)
+		if err := backupMgr.Restore(ctx, baseBackup, nil); err != nil {
+			t.Fatalf("G-46 VIOLATION: Restore from base backup failed: %v", err)
+		}
+
+		// Verify restored database does NOT have the post-backup drift deployment
+		_, err = c.depRepo.GetByID(ctx, driftDep.ID)
+		if err == nil {
+			t.Fatal("G-46 VIOLATION: Restored database contains post-backup deployment; expected B0 point-in-time state")
+		}
+
+		// 5. Execute §20.3 reconciliation sequence
+		// Control Plane discovers live worker state, reconciles against restored database,
+		// cleans up unmanaged/orphan containers safely, and ensures no ghost or duplicate containers
+		actions, err := c.reconciler.ReconcileOnce(ctx)
+		if err != nil {
+			t.Fatalf("G-46 VIOLATION: §20.3 reconciliation pass failed: %v", err)
+		}
+		if actions.StoppedCount == 0 {
+			t.Fatal("G-46 VIOLATION: §20.3 reconciler failed to detect and cleanup drift containers on live workers")
+		}
+
+		// 6. Verify cluster health and zero duplicate/ghost containers
+		actionsPost, err := c.reconciler.ReconcileOnce(ctx)
+		if err != nil {
+			t.Fatalf("G-46 VIOLATION: Second reconciliation pass failed: %v", err)
+		}
+		if !actionsPost.IsZero() {
+			t.Fatalf("G-46 VIOLATION: Cluster did not converge; subsequent reconcile took actions: %+v", actionsPost)
+		}
+
+		// 7. Verify control plane can schedule new workloads cleanly on the reconciled workers
+		healthyDep, healthyInsts, err := c.depService.CreateAndDeploy(ctx, deployments.CreateDeploymentParams{
+			ProjectID:     "g46-post-restore-service",
+			Image:         "registry.nebula/healthy-app:v1",
+			InstanceCount: 1,
+		})
+		if err != nil || len(healthyInsts) != 1 || healthyDep.Status != deployments.StatusRunning {
+			t.Fatalf("G-46 VIOLATION: Failed post-restore deployment: %v", err)
+		}
+
+		t.Log("✅ G-46 PASSED: Database restored from backup reconciles correctly against live worker state via §20.3 with zero ghost/duplicate containers")
+	})
+
 	t.Log("=========================================================================")
-	t.Log("🎉 ALL 44 GATES (G-01 THROUGH G-44) PASSED GREEN IN ONE CONTINUOUS RUN! 🎉")
+	t.Log("🎉 ALL 46 GATES (G-01 THROUGH G-46) PASSED GREEN IN ONE CONTINUOUS RUN! 🎉")
 	t.Log("=========================================================================")
 }
 
@@ -2446,6 +2644,10 @@ func TestMVP_GateRun_G01_to_G42(t *testing.T) {
 }
 
 func TestMVP_GateRun_G01_to_G44(t *testing.T) {
+	TestMVP_GateRun_G01_to_G28(t)
+}
+
+func TestMVP_GateRun_G01_to_G46(t *testing.T) {
 	TestMVP_GateRun_G01_to_G28(t)
 }
 

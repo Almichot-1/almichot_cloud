@@ -391,9 +391,15 @@ func TestHA_RepeatedMidReconciliationFailover(t *testing.T) {
 	cp1.elector.Stop() // Kill CP-1 mid-reconciliation
 	wg.Wait()
 
-	// Wait for CP-2 to take over leadership and complete its promotion reconciliation
-	time.Sleep(100 * time.Millisecond)
-
+	// Wait for CP-2 to take over leadership. The advisory lock TTL is 300ms, so
+	// a fixed sleep is structurally racy here; poll up to 5x the lease period.
+	deadlinePromote := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadlinePromote) {
+		if cp2.elector.IsLeader() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if !cp2.elector.IsLeader() {
 		t.Fatal("CP-2 should have assumed leadership")
 	}

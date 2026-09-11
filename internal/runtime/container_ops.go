@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -10,13 +11,15 @@ import (
 
 // RunOptions defines options for running an instance container.
 type RunOptions struct {
-	InstanceID   string
-	DeploymentID string
-	Image        string
-	Cmd          []string
-	Env          []string
-	Ports        []PortMapping
-	Labels       map[string]string
+	InstanceID    string
+	DeploymentID  string
+	Image         string
+	Cmd           []string
+	Env           []string
+	Ports         []PortMapping
+	Labels        map[string]string
+	CPULimit      float64
+	MemoryLimitMB int64
 }
 
 // RunResult represents the result of a RunContainer operation.
@@ -154,19 +157,26 @@ func (c *ContainerOps) RunContainer(ctx context.Context, opts RunOptions) (*RunR
 
 	// Create container via Docker client
 	createOpts := CreateContainerOptions{
-		InstanceID:   opts.InstanceID,
-		DeploymentID: opts.DeploymentID,
-		Image:        opts.Image,
-		Cmd:          opts.Cmd,
-		Env:          opts.Env,
-		Ports:        opts.Ports,
-		Labels:       opts.Labels,
+		InstanceID:    opts.InstanceID,
+		DeploymentID:  opts.DeploymentID,
+		Image:         opts.Image,
+		Cmd:           opts.Cmd,
+		Env:           opts.Env,
+		Ports:         opts.Ports,
+		Labels:        opts.Labels,
+		CPULimit:      opts.CPULimit,
+		MemoryLimitMB: opts.MemoryLimitMB,
 	}
 
 	containerID, err := c.client.CreateContainer(ctx, createOpts)
 	if err != nil {
 		record.State = StateFailed
-		record.LastError = fmt.Sprintf("docker create failed: %v", err)
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "unauthorized") || strings.Contains(errLower, "401") || strings.Contains(errLower, "authentication required") || strings.Contains(errLower, "invalid credentials") || strings.Contains(errLower, "token expired") {
+			record.LastError = fmt.Sprintf("REGISTRY_AUTH_FAILED: worker registry credentials rejected or expired: %v", err)
+		} else {
+			record.LastError = fmt.Sprintf("docker create failed: %v", err)
+		}
 		c.tracker.Set(record)
 
 		c.log.Error().
@@ -178,7 +188,7 @@ func (c *ContainerOps) RunContainer(ctx context.Context, opts RunOptions) (*RunR
 			InstanceID: opts.InstanceID,
 			Status:     string(StateFailed),
 			Error:      record.LastError,
-		}, err
+		}, fmt.Errorf("%s", record.LastError)
 	}
 
 	record.ContainerID = containerID

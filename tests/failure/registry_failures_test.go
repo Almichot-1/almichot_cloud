@@ -186,3 +186,57 @@ func TestRegistryFailure_AuthFailureActionableEvent(t *testing.T) {
 		t.Fatalf("expected actionable authentication error message, got: %v", err)
 	}
 }
+
+// TestRegistryFailure_WorkerPullAuthFailure_DistinctActionableError verifies that when a
+// worker's registry credentials are expired or revoked at image pull time (§10.2), the worker
+// surfaces a distinct, actionable error (REGISTRY_AUTH_FAILED) rather than a generic IMAGE_PULL_FAILED.
+func TestRegistryFailure_WorkerPullAuthFailure_DistinctActionableError(t *testing.T) {
+	ctx := context.Background()
+	log := zerolog.Nop()
+
+	workerClient := runtime.NewMockDockerClient()
+	workerClient.ImageCache = make(map[string]bool) // Fresh worker with empty local cache
+	// Worker registry pull credentials revoked/expired
+	workerClient.FailPull = errors.New("401 Unauthorized: token expired or invalid registry credentials (§10.2)")
+
+	tracker := runtime.NewInstanceTracker()
+	ops := runtime.NewContainerOps(workerClient, tracker, log)
+
+	res, err := ops.RunContainer(ctx, runtime.RunOptions{
+		InstanceID:   "inst-pull-auth-fail",
+		DeploymentID: "dep-pull-auth-fail",
+		Image:        "nebula/secure-app:v1.0",
+		Labels: map[string]string{
+			"nebula.image_digest": "sha256:deadbeef12345678",
+		},
+	})
+
+	if err == nil {
+		t.Fatalf("expected RunContainer to fail when worker cannot authenticate to registry")
+	}
+
+	if res.Status != string(runtime.StateFailed) {
+		t.Fatalf("expected instance state FAILED, got %s", res.Status)
+	}
+
+	if workerClient.CreateCalls != 0 {
+		t.Fatalf("CreateContainer must not be called when registry authentication fails, got %d calls", workerClient.CreateCalls)
+	}
+
+	// Must surface as distinct, actionable REGISTRY_AUTH_FAILED error, not generic IMAGE_PULL_FAILED
+	if !strings.Contains(res.Error, "REGISTRY_AUTH_FAILED") {
+		t.Fatalf("expected error to explicitly identify REGISTRY_AUTH_FAILED, got: %s", res.Error)
+	}
+	if !strings.Contains(res.Error, "credentials rejected or expired") && !strings.Contains(res.Error, "401") {
+		t.Fatalf("expected actionable diagnostic details in error message, got: %s", res.Error)
+	}
+
+	// Verify the instance tracker recorded the distinct error
+	rec, exists := tracker.Get("inst-pull-auth-fail")
+	if !exists {
+		t.Fatalf("expected instance record to exist in tracker")
+	}
+	if !strings.Contains(rec.LastError, "REGISTRY_AUTH_FAILED") {
+		t.Fatalf("expected tracker LastError to record REGISTRY_AUTH_FAILED, got: %s", rec.LastError)
+	}
+}

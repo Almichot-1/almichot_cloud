@@ -7,7 +7,7 @@
 #   make build         — build all cmd binaries
 #   make vet           — run go vet
 
-.PHONY: test test-realinfra gate-lint build vet all
+.PHONY: test test-realinfra test-realinfra-strict gate-lint build vet all
 
 # ── Default: run the standard in-memory logic suite ──────────────────────────
 test:
@@ -19,6 +19,12 @@ test:
 # Timeout is generous to allow for Postgres lock expiry (30-120s) and pg_dump.
 test-realinfra:
 	go test -v -tags realinfra -run "TestGate_.*_RealInfra|TestGate_ZZ" \
+		./tests/gate/ -timeout 300s
+
+# ── Real-infra gate suite in strict mode (CI standard) ────────────────────────
+# Fails immediately if any required component or binary is missing.
+test-realinfra-strict:
+	NEBULA_REALINFRA_STRICT=1 go test -v -tags realinfra -run "TestGate_.*_RealInfra|TestGate_ZZ" \
 		./tests/gate/ -timeout 300s
 
 # ── Guardrail 2: Banned-symbol lint ──────────────────────────────────────────

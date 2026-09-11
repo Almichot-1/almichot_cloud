@@ -52,16 +52,59 @@ func (s *WorkerServiceServer) SetWorkerKey(key string) {
 
 var _ proto.WorkerServiceServer = (*WorkerServiceServer)(nil)
 
+// validateRunContainerRequest validates input parameters against hostile or malformed payloads (§21.2).
+func validateRunContainerRequest(req *proto.RunContainerRequest) error {
+	if req.InstanceId == "" {
+		return status.Error(codes.InvalidArgument, "instance_id is required")
+	}
+	if req.Image == "" {
+		return status.Error(codes.InvalidArgument, "image is required")
+	}
+	// Path traversal check in image name
+	if strings.Contains(req.Image, "..") || strings.HasPrefix(req.Image, "/") || strings.HasPrefix(req.Image, "\\") {
+		return status.Errorf(codes.InvalidArgument, "invalid image name: path traversal not allowed: %s", req.Image)
+	}
+
+	// Port range validation (must be 1-65535)
+	for _, p := range req.Ports {
+		if p.HostPort < 1 || p.HostPort > 65535 || p.ContainerPort < 1 || p.ContainerPort > 65535 {
+			return status.Errorf(codes.InvalidArgument, "port out of range [1-65535]: host_port=%d, container_port=%d", p.HostPort, p.ContainerPort)
+		}
+	}
+
+	// Env validation: injection patterns, invalid characters, and size limit
+	for k, v := range req.Env {
+		if k == "" || strings.Contains(k, "=") || strings.Contains(k, "\x00") {
+			return status.Errorf(codes.InvalidArgument, "invalid environment variable key %q", k)
+		}
+		if len(v) > 32768 {
+			return status.Errorf(codes.InvalidArgument, "environment variable %q exceeds maximum allowed size (32KB)", k)
+		}
+		if strings.Contains(v, "$(") || strings.Contains(v, "`") || strings.Contains(k, "$(") || strings.Contains(k, "`") {
+			return status.Errorf(codes.InvalidArgument, "shell injection pattern detected in environment variable %q", k)
+		}
+	}
+
+	// Labels validation: injection patterns and size limit
+	for k, v := range req.Labels {
+		if strings.Contains(v, "$(") || strings.Contains(v, "`") || strings.Contains(k, "$(") || strings.Contains(k, "`") {
+			return status.Errorf(codes.InvalidArgument, "shell injection pattern detected in label %q", k)
+		}
+		if len(v) > 32768 {
+			return status.Errorf(codes.InvalidArgument, "label %q exceeds maximum allowed size (32KB)", k)
+		}
+	}
+
+	return nil
+}
+
 // RunContainer starts a container for an instance or returns the existing container if already running (G-09).
 func (s *WorkerServiceServer) RunContainer(ctx context.Context, req *proto.RunContainerRequest) (*proto.RunContainerResponse, error) {
 	if err := authorizeRuntimeCaller(ctx); err != nil {
 		return nil, err
 	}
-	if req.InstanceId == "" {
-		return nil, status.Error(codes.InvalidArgument, "instance_id is required")
-	}
-	if req.Image == "" {
-		return nil, status.Error(codes.InvalidArgument, "image is required")
+	if err := validateRunContainerRequest(req); err != nil {
+		return nil, err
 	}
 
 	envVars := make([]string, 0, len(req.Env))
@@ -92,13 +135,15 @@ func (s *WorkerServiceServer) RunContainer(ctx context.Context, req *proto.RunCo
 	}
 
 	runOpts := runtime.RunOptions{
-		InstanceID:   req.InstanceId,
-		DeploymentID: req.DeploymentId,
-		Image:        req.Image,
-		Cmd:          cmd,
-		Env:          envVars,
-		Ports:        ports,
-		Labels:       labels,
+		InstanceID:    req.InstanceId,
+		DeploymentID:  req.DeploymentId,
+		Image:         req.Image,
+		Cmd:           cmd,
+		Env:           envVars,
+		Ports:         ports,
+		Labels:        labels,
+		CPULimit:      req.CpuLimit,
+		MemoryLimitMB: req.MemoryLimitMb,
 	}
 
 	result, err := s.ops.RunContainer(ctx, runOpts)

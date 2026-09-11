@@ -8,6 +8,7 @@ package gate
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -25,20 +26,71 @@ import (
 	"github.com/nebula/nebula/internal/storage"
 )
 
+// ─── Strict mode & skip tracking ──────────────────────────────────────────────
+
+var (
+	realinfraSkipsMu sync.Mutex
+	realinfraSkips   []string
+)
+
+// isStrictMode reports whether NEBULA_REALINFRA_STRICT=1 is set.
+// When active, any missing dependency or failed setup immediately fails the test.
+func isStrictMode() bool {
+	return os.Getenv("NEBULA_REALINFRA_STRICT") == "1"
+}
+
+// trackGateTest registers a cleanup hook that records the test name if the test was skipped.
+func trackGateTest(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		if t.Skipped() {
+			realinfraSkipsMu.Lock()
+			defer realinfraSkipsMu.Unlock()
+			for _, name := range realinfraSkips {
+				if name == t.Name() {
+					return
+				}
+			}
+			realinfraSkips = append(realinfraSkips, t.Name())
+		}
+	})
+}
+
+// skipOrFatal either fails immediately (in strict mode) or skips gracefully (in local dev).
+func skipOrFatal(t *testing.T, format string, args ...any) {
+	t.Helper()
+	msg := fmt.Sprintf(format, args...)
+	if isStrictMode() {
+		t.Fatalf("STRICT MODE VIOLATION: %s", msg)
+	}
+	t.Skip(msg)
+}
+
+// requireBinary skips t if the named binary is not found on PATH. In strict mode,
+// it fails the test immediately.
+func requireBinary(t *testing.T, binName string) {
+	t.Helper()
+	trackGateTest(t)
+	if _, err := exec.LookPath(binName); err != nil {
+		skipOrFatal(t, "%s binary not found on PATH; skipping real-infra gate", binName)
+	}
+}
+
 // ─── Docker / Postgres helpers ────────────────────────────────────────────────
 
 // requireDockerAvailable skips t if the `docker` binary is not on PATH or if
-// the Docker daemon is not reachable.
+// the Docker daemon is not reachable. In strict mode, it fails the test immediately.
 func requireDockerAvailable(t *testing.T) {
 	t.Helper()
+	trackGateTest(t)
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker binary not found on PATH; skipping real-infra gate")
+		skipOrFatal(t, "docker binary not found on PATH; skipping real-infra gate")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", "info")
 	if err := cmd.Run(); err != nil {
-		t.Skipf("docker daemon not reachable (%v); skipping real-infra gate", err)
+		skipOrFatal(t, "docker daemon not reachable (%v); skipping real-infra gate", err)
 	}
 }
 
@@ -47,6 +99,7 @@ func requireDockerAvailable(t *testing.T) {
 // Each call returns a new independent instance on a random host port.
 func startPostgres(t *testing.T) (dsn string, pool *pgxpool.Pool) {
 	t.Helper()
+	trackGateTest(t)
 	requireDockerAvailable(t)
 
 	containerName := fmt.Sprintf("nebula-gate-pg-%d", time.Now().UnixNano())
@@ -80,13 +133,9 @@ func startPostgres(t *testing.T) (dsn string, pool *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("docker port: %v", err)
 	}
-	// Output: "0.0.0.0:NNNNN\n" or ":::NNNNN\n"
-	portLine := strings.TrimSpace(string(portOut))
-	_, hostPort, err := net.SplitHostPort(portLine)
+	hostPort, err := parseDockerPort(string(portOut))
 	if err != nil {
-		// IPv6 format ":::PORT"
-		parts := strings.Split(portLine, ":")
-		hostPort = parts[len(parts)-1]
+		t.Fatalf("parse postgres port: %v", err)
 	}
 
 	dsn = fmt.Sprintf("postgres://%s:%s@127.0.0.1:%s/%s?sslmode=disable", pgUser, pgPass, hostPort, pgDB)
@@ -143,11 +192,40 @@ const (
 	localstackRegion    = "us-east-1"
 )
 
+// pullDockerImageWithRetry attempts to pull the specified docker image with bounded
+// retries and exponential backoff (e.g. 2 attempts, exponential backoff: 2s, 4s).
+func pullDockerImageWithRetry(image string, retries int, initialBackoff time.Duration) error {
+	var lastErr error
+	backoff := initialBackoff
+	for attempt := 0; attempt <= retries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		cmd := exec.CommandContext(ctx, "docker", "pull", image)
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("docker pull %s: %w (%s)", image, err, strings.TrimSpace(string(out)))
+		if attempt < retries {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+	return lastErr
+}
+
 // startLocalStack launches a LocalStack container and waits until the KMS endpoint
 // is ready. Returns the base endpoint URL (e.g. "http://127.0.0.1:NNNNN").
 func startLocalStack(t *testing.T) (endpointURL string) {
 	t.Helper()
+	trackGateTest(t)
 	requireDockerAvailable(t)
+
+	// Ensure LocalStack image is pulled with bounded retries (Fix 1).
+	if err := pullDockerImageWithRetry(localstackImage, 2, 2*time.Second); err != nil {
+		skipOrFatal(t, "failed to pull LocalStack image %q after retries: %v", localstackImage, err)
+		return ""
+	}
 
 	containerName := fmt.Sprintf("nebula-gate-ls-%d", time.Now().UnixNano())
 	cmd := exec.Command("docker", "run", "--rm", "--name", containerName,
@@ -159,7 +237,8 @@ func startLocalStack(t *testing.T) (endpointURL string) {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("docker run localstack: %v\n%s", err, out)
+		skipOrFatal(t, "docker run localstack (%s) failed: %v\n%s", localstackImage, err, out)
+		return ""
 	}
 	containerID := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
@@ -168,21 +247,25 @@ func startLocalStack(t *testing.T) (endpointURL string) {
 		_ = exec.CommandContext(ctx, "docker", "rm", "-f", containerID).Run()
 	})
 
-	portOut, _ := exec.Command("docker", "port", containerID, localstackKMSPort).Output()
-	portLine := strings.TrimSpace(string(portOut))
-	_, hostPort, _ := net.SplitHostPort(portLine)
-	if hostPort == "" {
-		parts := strings.Split(portLine, ":")
-		hostPort = parts[len(parts)-1]
+	portOut, err := exec.Command("docker", "port", containerID, localstackKMSPort).Output()
+	if err != nil {
+		skipOrFatal(t, "docker port localstack: %v", err)
+		return ""
+	}
+	hostPort, err := parseDockerPort(string(portOut))
+	if err != nil {
+		skipOrFatal(t, "parse localstack port: %v", err)
+		return ""
 	}
 
 	endpointURL = "http://127.0.0.1:" + hostPort
 
 	// Wait for LocalStack health check.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if err := waitForHTTPHealth(ctx, endpointURL+"/_localstack/health"); err != nil {
-		t.Fatalf("LocalStack not ready: %v", err)
+		skipOrFatal(t, "LocalStack not ready: %v", err)
+		return ""
 	}
 
 	t.Logf("LocalStack ready: endpoint=%s", endpointURL)
@@ -221,15 +304,17 @@ func createLocalStackCMK(t *testing.T, endpoint string) string {
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
-	// Simple string extraction: find "KeyId":"..."
-	content := string(raw)
-	start := strings.Index(content, `"KeyId":"`)
-	if start < 0 {
-		t.Fatalf("create CMK: KeyId not in response: %s", content)
+
+	var respData struct {
+		KeyMetadata struct {
+			KeyId string `json:"KeyId"`
+		} `json:"KeyMetadata"`
 	}
-	start += len(`"KeyId":"`)
-	end := strings.Index(content[start:], `"`)
-	return content[start : start+end]
+	if err := json.Unmarshal(raw, &respData); err == nil && respData.KeyMetadata.KeyId != "" {
+		return respData.KeyMetadata.KeyId
+	}
+	t.Fatalf("create CMK: failed to parse KeyId from response: %s", string(raw))
+	return ""
 }
 
 // ─── Subprocess / binary helpers ─────────────────────────────────────────────
@@ -375,22 +460,48 @@ func waitForTCPAddr(addr string, ctx context.Context) error {
 	}
 }
 
+// parseDockerPort parses the assigned host port from the output of `docker port`.
+// Handles multi-line output (IPv4 + IPv6).
+func parseDockerPort(output string) (string, error) {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if _, port, err := net.SplitHostPort(line); err == nil && port != "" {
+			return port, nil
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) > 1 {
+			p := strings.TrimSpace(parts[len(parts)-1])
+			if p != "" {
+				return p, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("could not parse port from docker port output: %q", output)
+}
+
 // waitForHTTPHealth polls a URL until it returns HTTP 200 or ctx expires.
 func waitForHTTPHealth(ctx context.Context, url string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timed out waiting for HTTP health %s: %w", url, ctx.Err())
 		default:
 		}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
-			return nil
-		}
-		if resp != nil {
-			resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err == nil {
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				resp.Body.Close()
+				return nil
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

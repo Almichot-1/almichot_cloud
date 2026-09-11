@@ -143,3 +143,28 @@ jobs:
         with:
           name: coverage.out
           path: coverage.out
+
+  realinfra-gate:
+    name: Real-infra gate suite (Strict Mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: Install PostgreSQL client (pg_dump, pg_restore)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Pre-pull Docker images
+        run: |
+          docker pull postgres:17-alpine
+          docker pull localstack/localstack:4
+      - name: Run gate mock banned-symbol lint (Guardrail 2)
+        run: bash scripts/lint-gate-mocks.sh
+      - name: Run real-infra gate suite (Strict Mode)
+        env:
+          NEBULA_REALINFRA_STRICT: "1"
+        run: |
+          go test -v -tags realinfra -run "TestGate_.*_RealInfra|TestGate_ZZ" ./tests/gate/ -timeout 300s

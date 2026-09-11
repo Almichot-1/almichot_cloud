@@ -153,13 +153,15 @@ jobs:
         with:
           go-version: "1.26.x"
           cache: true
-      - name: Install PostgreSQL client (pg_dump, pg_restore)
+      - name: Install PostgreSQL client (pg_dump, pg_restore 18)
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
       - name: Pre-pull Docker images
         run: |
-          docker pull postgres:17-alpine
+          docker pull postgres:18-alpine
           docker pull localstack/localstack:4
       - name: Run gate mock banned-symbol lint (Guardrail 2)
         run: bash scripts/lint-gate-mocks.sh

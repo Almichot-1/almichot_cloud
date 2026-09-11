@@ -1,4 +1,4 @@
-//go:build realinfra
+﻿//go:build realinfra
 
 // Package gate contains real-infrastructure gate tests for the Nebula platform.
 // This file provides shared helpers used across G-26, G-34, G-36/37, G-43/44, and G-46.
@@ -26,7 +26,7 @@ import (
 	"github.com/nebula/nebula/internal/storage"
 )
 
-// ─── Strict mode & skip tracking ──────────────────────────────────────────────
+// â”€â”€â”€ Strict mode & skip tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 var (
 	realinfraSkipsMu sync.Mutex
@@ -76,7 +76,7 @@ func requireBinary(t *testing.T, binName string) {
 	}
 }
 
-// ─── Docker / Postgres helpers ────────────────────────────────────────────────
+// â”€â”€â”€ Docker / Postgres helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // requireDockerAvailable skips t if the `docker` binary is not on PATH or if
 // the Docker daemon is not reachable. In strict mode, it fails the test immediately.
@@ -94,7 +94,7 @@ func requireDockerAvailable(t *testing.T) {
 	}
 }
 
-// startPostgres launches a fresh postgres:17-alpine Docker container, waits until it
+// startPostgres launches a fresh postgres:18-alpine Docker container, waits until it
 // is ready, and registers cleanup. Returns the DSN and an open pgxpool.Pool.
 // Each call returns a new independent instance on a random host port.
 func startPostgres(t *testing.T) (dsn string, pool *pgxpool.Pool) {
@@ -112,7 +112,7 @@ func startPostgres(t *testing.T) (dsn string, pool *pgxpool.Pool) {
 		"-e", "POSTGRES_DB="+pgDB,
 		"-p", "0:5432", // random host port
 		"-d", // detached
-		"postgres:17-alpine",
+		"postgres:18-alpine",
 		"-c", "log_min_messages=WARNING",
 	)
 	out, err := cmd.CombinedOutput()
@@ -182,7 +182,7 @@ func waitForPostgresReady(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 }
 
-// ─── LocalStack helpers ───────────────────────────────────────────────────────
+// â”€â”€â”€ LocalStack helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const (
 	localstackImage     = "localstack/localstack:4"
@@ -325,7 +325,7 @@ func createLocalStackCMK(t *testing.T, endpoint string) string {
 	return ""
 }
 
-// ─── Subprocess / binary helpers ─────────────────────────────────────────────
+// â”€â”€â”€ Subprocess / binary helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // buildNebulaTestBinary compiles the Go package at pkgPath (relative to the
 // module root, e.g. "./cmd/gate-registry-worker") into a temp directory and
@@ -369,7 +369,7 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// ─── TCP Proxy (for G-44 partition simulation) ────────────────────────────────
+// â”€â”€â”€ TCP Proxy (for G-44 partition simulation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // TCPProxy forwards TCP connections between clients and a backend, and can be
 // "partitioned" to simulate a network split by closing all active connections.
@@ -449,7 +449,7 @@ func (p *TCPProxy) serve() {
 	}
 }
 
-// ─── General utilities ────────────────────────────────────────────────────────
+// â”€â”€â”€ General utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // waitForTCPAddr polls addr (host:port) until a successful TCP connect or ctx expires.
 func waitForTCPAddr(addr string, ctx context.Context) error {
@@ -525,7 +525,7 @@ func isProcessAlive(pid int) bool {
 		}
 		return strings.Contains(string(out), fmt.Sprintf("%d", pid))
 	}
-	// Unix: kill(pid, 0) — no signal sent, just existence check
+	// Unix: kill(pid, 0) â€” no signal sent, just existence check
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
@@ -552,3 +552,4 @@ func captureSubprocessStdout(t *testing.T, cmd *exec.Cmd) string {
 	}
 	return last
 }
+

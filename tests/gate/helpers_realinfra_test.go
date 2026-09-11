@@ -279,11 +279,19 @@ func createLocalStackCMK(t *testing.T, endpoint string) string {
 	defer cancel()
 
 	// Use AWS CLI if available; otherwise use raw HTTP.
+	// LocalStack accepts any credentials; explicit env is required because the
+	// CI runner has no configured AWS profiles (AWS CLI exits 253 otherwise).
 	if _, err := exec.LookPath("aws"); err == nil {
-		out, err := exec.CommandContext(ctx, "aws", "--endpoint-url="+endpoint,
+		cmd := exec.CommandContext(ctx, "aws", "--endpoint-url="+endpoint,
 			"--region="+localstackRegion,
 			"kms", "create-key", "--query=KeyMetadata.KeyId", "--output=text",
-		).CombinedOutput()
+		)
+		cmd.Env = append(os.Environ(),
+			"AWS_ACCESS_KEY_ID="+localstackAccessKey,
+			"AWS_SECRET_ACCESS_KEY="+localstackSecretKey,
+			"AWS_DEFAULT_REGION="+localstackRegion,
+		)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("aws kms create-key: %v\n%s", err, out)
 		}

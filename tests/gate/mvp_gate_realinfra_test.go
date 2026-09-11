@@ -687,10 +687,16 @@ func TestGate_G46_PostgresBackupRestore_RealInfra(t *testing.T) {
 	srcDepRepo := storage.NewPostgresDeploymentRepository(srcPool)
 	srcProjectRepo := storage.NewPostgresProjectRepository(srcPool)
 
-	_ = srcProjectRepo.Create(ctx, &projects.Project{ID: "proj-g46-pre", Name: "pre-backup"})
+	// Real Postgres enforces UUID project ids; non-UUID literals (e.g. "proj-g46-pre")
+	// were silently acceptable only before this gate ran against real Postgres.
+	projectID := uuid.New().String()
+
+	if err := srcProjectRepo.Create(ctx, &projects.Project{ID: projectID, Name: "pre-backup"}); err != nil {
+		t.Fatalf("G-46: create pre-backup project: %v", err)
+	}
 	preDep := &deployments.Deployment{
 		ID:           uuid.New().String(),
-		ProjectID:    "proj-g46-pre",
+		ProjectID:    projectID,
 		DesiredState: "RUNNING",
 		Status:       deployments.StatusRunning,
 		Image:        "registry.nebula/g46-pre:v1",
@@ -719,7 +725,7 @@ func TestGate_G46_PostgresBackupRestore_RealInfra(t *testing.T) {
 	// Write drift data AFTER backup — must NOT appear in restored dstDSN.
 	driftDep := &deployments.Deployment{
 		ID:           uuid.New().String(),
-		ProjectID:    "proj-g46-pre",
+		ProjectID:    projectID,
 		DesiredState: "RUNNING",
 		Status:       deployments.StatusRunning,
 		Image:        "registry.nebula/g46-drift:v1",

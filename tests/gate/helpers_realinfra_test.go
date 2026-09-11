@@ -1,4 +1,4 @@
-﻿//go:build realinfra
+//go:build realinfra
 
 // Package gate contains real-infrastructure gate tests for the Nebula platform.
 // This file provides shared helpers used across G-26, G-34, G-36/37, G-43/44, and G-46.
@@ -552,4 +552,3 @@ func captureSubprocessStdout(t *testing.T, cmd *exec.Cmd) string {
 	}
 	return last
 }
-

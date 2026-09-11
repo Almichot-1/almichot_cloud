@@ -687,13 +687,14 @@ func TestGate_G46_PostgresBackupRestore_RealInfra(t *testing.T) {
 	srcDepRepo := storage.NewPostgresDeploymentRepository(srcPool)
 	srcProjectRepo := storage.NewPostgresProjectRepository(srcPool)
 
-	// Real Postgres enforces UUID project ids; non-UUID literals (e.g. "proj-g46-pre")
-	// were silently acceptable only before this gate ran against real Postgres.
-	projectID := uuid.New().String()
-
-	if err := srcProjectRepo.Create(ctx, &projects.Project{ID: projectID, Name: "pre-backup"}); err != nil {
+	// Real Postgres enforces FK to projects(id); the repo generates the id and
+	// returns it on the struct (G-43 pattern) — pre-seeding a literal here is
+	// rejected silently by ON CONFLICT (name) DO NOTHING on re-runs.
+	liveProj := &projects.Project{Name: "g46-pre-backup"}
+	if err := srcProjectRepo.Create(ctx, liveProj); err != nil {
 		t.Fatalf("G-46: create pre-backup project: %v", err)
 	}
+	projectID := liveProj.ID
 	preDep := &deployments.Deployment{
 		ID:           uuid.New().String(),
 		ProjectID:    projectID,

@@ -89,6 +89,8 @@ type RunContainerRequest struct {
 	Env           map[string]string      `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Ports         []*PortMapping         `protobuf:"bytes,5,rep,name=ports,proto3" json:"ports,omitempty"`
 	Labels        map[string]string      `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CpuLimit      float64                `protobuf:"fixed64,7,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
+	MemoryLimitMb int64                  `protobuf:"varint,8,opt,name=memory_limit_mb,json=memoryLimitMb,proto3" json:"memory_limit_mb,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -163,6 +165,20 @@ func (x *RunContainerRequest) GetLabels() map[string]string {
 		return x.Labels
 	}
 	return nil
+}
+
+func (x *RunContainerRequest) GetCpuLimit() float64 {
+	if x != nil {
+		return x.CpuLimit
+	}
+	return 0
+}
+
+func (x *RunContainerRequest) GetMemoryLimitMb() int64 {
+	if x != nil {
+		return x.MemoryLimitMb
+	}
+	return 0
 }
 
 type RunContainerResponse struct {
@@ -773,7 +789,7 @@ const file_proto_worker_proto_rawDesc = "" +
 	"\vPortMapping\x12\x1b\n" +
 	"\thost_port\x18\x01 \x01(\x05R\bhostPort\x12%\n" +
 	"\x0econtainer_port\x18\x02 \x01(\x05R\rcontainerPort\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"\x9d\x03\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"\xe2\x03\n" +
 	"\x13RunContainerRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
@@ -781,7 +797,9 @@ const file_proto_worker_proto_rawDesc = "" +
 	"\x05image\x18\x03 \x01(\tR\x05image\x12=\n" +
 	"\x03env\x18\x04 \x03(\v2+.nebula.worker.RunContainerRequest.EnvEntryR\x03env\x120\n" +
 	"\x05ports\x18\x05 \x03(\v2\x1a.nebula.worker.PortMappingR\x05ports\x12F\n" +
-	"\x06labels\x18\x06 \x03(\v2..nebula.worker.RunContainerRequest.LabelsEntryR\x06labels\x1a6\n" +
+	"\x06labels\x18\x06 \x03(\v2..nebula.worker.RunContainerRequest.LabelsEntryR\x06labels\x12\x1b\n" +
+	"\tcpu_limit\x18\a \x01(\x01R\bcpuLimit\x12&\n" +
+	"\x0fmemory_limit_mb\x18\b \x01(\x03R\rmemoryLimitMb\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +

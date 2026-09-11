@@ -23,13 +23,15 @@ type PortMapping struct {
 
 // CreateContainerOptions holds parameters for container creation.
 type CreateContainerOptions struct {
-	InstanceID   string
-	DeploymentID string
-	Image        string
-	Cmd          []string
-	Env          []string
-	Ports        []PortMapping
-	Labels       map[string]string
+	InstanceID    string
+	DeploymentID  string
+	Image         string
+	Cmd           []string
+	Env           []string
+	Ports         []PortMapping
+	Labels        map[string]string
+	CPULimit      float64
+	MemoryLimitMB int64
 }
 
 // ContainerDetails holds detailed container inspection information.
@@ -42,6 +44,8 @@ type ContainerDetails struct {
 	Error     string
 	Labels    map[string]string
 	CreatedAt time.Time
+	NanoCPUs  int64
+	Memory    int64
 }
 
 // ContainerSummary holds high-level container info for listings.
@@ -141,11 +145,20 @@ func (d *RealDockerClient) CreateContainer(ctx context.Context, opts CreateConta
 		ExposedPorts: exposedPorts,
 	}
 
+	resources := container.Resources{}
+	if opts.CPULimit > 0 {
+		resources.NanoCPUs = int64(opts.CPULimit * 1e9)
+	}
+	if opts.MemoryLimitMB > 0 {
+		resources.Memory = opts.MemoryLimitMB * 1024 * 1024
+	}
+
 	hostConfig := &container.HostConfig{
 		PortBindings: portBindings,
 		RestartPolicy: container.RestartPolicy{
 			Name: "no",
 		},
+		Resources: resources,
 	}
 
 	containerName := fmt.Sprintf("nebula-%s", opts.InstanceID)
@@ -196,6 +209,12 @@ func (d *RealDockerClient) InspectContainer(ctx context.Context, containerID str
 		errMsg = inspect.State.Error
 	}
 
+	var nanoCPUs, memoryBytes int64
+	if inspect.HostConfig != nil {
+		nanoCPUs = inspect.HostConfig.NanoCPUs
+		memoryBytes = inspect.HostConfig.Memory
+	}
+
 	return &ContainerDetails{
 		ID:        inspect.ID,
 		Image:     inspect.Config.Image,
@@ -205,7 +224,14 @@ func (d *RealDockerClient) InspectContainer(ctx context.Context, containerID str
 		Error:     errMsg,
 		Labels:    inspect.Config.Labels,
 		CreatedAt: createdAt,
+		NanoCPUs:  nanoCPUs,
+		Memory:    memoryBytes,
 	}, nil
+}
+
+// RawClient returns the underlying official Docker client.
+func (d *RealDockerClient) RawClient() *client.Client {
+	return d.cli
 }
 
 func (d *RealDockerClient) ListContainers(ctx context.Context) ([]ContainerSummary, error) {
@@ -260,18 +286,22 @@ type MockDockerClient struct {
 
 // MockContainer represents a simulated container in MockDockerClient.
 type MockContainer struct {
-	ID           string
-	InstanceID   string
-	DeploymentID string
-	Image        string
-	Env          []string
-	Labels       map[string]string
-	Ports        []PortMapping
-	State        string // "created", "running", "stopped", "exited"
-	Status       string
-	ExitCode     int
-	Error        string
-	CreatedAt    time.Time
+	ID            string
+	InstanceID    string
+	DeploymentID  string
+	Image         string
+	Env           []string
+	Labels        map[string]string
+	Ports         []PortMapping
+	State         string // "created", "running", "stopped", "exited"
+	Status        string
+	ExitCode      int
+	Error         string
+	CreatedAt     time.Time
+	CPULimit      float64
+	MemoryLimitMB int64
+	NanoCPUs      int64
+	Memory        int64
 }
 
 // NewMockDockerClient creates a new mock Docker client.
@@ -329,17 +359,29 @@ func (m *MockDockerClient) CreateContainer(ctx context.Context, opts CreateConta
 		labels["nebula.deployment_id"] = opts.DeploymentID
 	}
 
+	var nanoCPUs, memoryBytes int64
+	if opts.CPULimit > 0 {
+		nanoCPUs = int64(opts.CPULimit * 1e9)
+	}
+	if opts.MemoryLimitMB > 0 {
+		memoryBytes = opts.MemoryLimitMB * 1024 * 1024
+	}
+
 	m.containers[id] = &MockContainer{
-		ID:           id,
-		InstanceID:   opts.InstanceID,
-		DeploymentID: opts.DeploymentID,
-		Image:        opts.Image,
-		Env:          opts.Env,
-		Labels:       labels,
-		Ports:        opts.Ports,
-		State:        "created",
-		Status:       "Created",
-		CreatedAt:    time.Now().UTC(),
+		ID:            id,
+		InstanceID:    opts.InstanceID,
+		DeploymentID:  opts.DeploymentID,
+		Image:         opts.Image,
+		Env:           opts.Env,
+		Labels:        labels,
+		Ports:         opts.Ports,
+		State:         "created",
+		Status:        "Created",
+		CreatedAt:     time.Now().UTC(),
+		CPULimit:      opts.CPULimit,
+		MemoryLimitMB: opts.MemoryLimitMB,
+		NanoCPUs:      nanoCPUs,
+		Memory:        memoryBytes,
 	}
 
 	return id, nil
@@ -407,6 +449,8 @@ func (m *MockDockerClient) InspectContainer(ctx context.Context, containerID str
 		Error:     c.Error,
 		Labels:    c.Labels,
 		CreatedAt: c.CreatedAt,
+		NanoCPUs:  c.NanoCPUs,
+		Memory:    c.Memory,
 	}, nil
 }
 

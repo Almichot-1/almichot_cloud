@@ -25,6 +25,8 @@ message RunContainerRequest {
   map<string, string> env = 4;
   repeated PortMapping ports = 5;
   map<string, string> labels = 6;
+  double cpu_limit = 7;
+  int64 memory_limit_mb = 8;
 }
 
 message RunContainerResponse {

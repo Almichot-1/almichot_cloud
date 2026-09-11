@@ -159,6 +159,10 @@ jobs:
           sudo apt-get install -y postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18
+          sudo update-alternatives --set pg_dump /usr/lib/postgresql/18/bin/pg_dump
+          sudo update-alternatives --set pg_restore /usr/lib/postgresql/18/bin/pg_restore
+          pg_dump --version
+          pg_restore --version
       - name: Pre-pull Docker images
         run: |
           docker pull postgres:18-alpine

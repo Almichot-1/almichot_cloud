@@ -774,6 +774,17 @@ func TestGate_G46_PostgresBackupRestore_RealInfra(t *testing.T) {
 	dstSched := scheduler.NewScheduler(dstWReg, dstInstRepo.CountByWorkerForDeployment, log)
 	dstMockFactory := deployments.NewMockWorkerClientFactory()
 
+	// The drift container runs on a worker that must be a REAL registered worker in the
+	// restored DB (registry.List only surfaces registered workers to reconcile).
+	if _, err := dstWReg.Register(ctx, workers.RegisterParams{
+		WorkerKey: "worker-1",
+		Hostname:  "ha-node-1",
+		IPAddress: "192.168.1.51",
+		Capacity:  10,
+	}); err != nil {
+		t.Fatalf("G-46: register post-restore worker: %v", err)
+	}
+
 	// Simulate the drift container still running on the worker.
 	dstMockFactory.AddContainer("worker-1", &proto.ContainerInfo{
 		ContainerId: "ctr-drift-g46",
